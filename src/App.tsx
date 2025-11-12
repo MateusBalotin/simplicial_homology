@@ -551,7 +551,7 @@ export default function App(){
   return (
     <div className="p-6 max-w-6xl mx-auto font-sans">
       <h1 className="text-2xl font-bold mb-1">Interactive Homology (Simplicial, Z & R)</h1>
-      <p className="text-sm text-gray-700 mb-4">Step through: triangulate -\u003e chains -\u003e boundary matrices -\u003e ranks -\u003e <b>RREF</b> (Q) -\u003e <b>SNF</b> (Z) -\u003e homology.</p>
+      <p className="text-sm text-gray-700 mb-4">Percorra as etapas: <b>triangulação</b> → <b>cadeias</b> → <b>matrizes de fronteira</b> → <b>postos</b> → <b>RREF</b> (ℚ) → <b>SNF</b> (ℤ) → <b>homologia</b>.</p>
 
       <div className="grid md:grid-cols-3 gap-4 mb-6">
         <div className="p-4 rounded-2xl shadow bg-white">
@@ -606,16 +606,16 @@ export default function App(){
         {faces && faces.length? (
           <div className="w-full">
             <TriangulationView space={space} m={m} n={n} faces={faces as number[][]}/>
-            <div className="text-xs text-gray-600 mt-2">Vertices are labeled by id; triangles are drawn semi-transparent with edges overlay. RP^2 uses a fixed 6-vertex layout on a circle; torus/Klein use an m x n grid with identifications.</div>
+            <div className="text-xs text-gray-600 mt-2">Os vértices são rotulados pelo id; os triângulos são desenhados semitransparentes com as arestas por cima. RP² usa um arranjo fixo de 6 vértices em um círculo; toro/garrafa de Klein usam uma malha m×n com identificações nas bordas.</div>
           </div>
         ) : <div className="text-sm text-gray-600">(triangulate to preview)</div>}
       </Section>
 
       <div className="grid md:grid-cols-2 gap-4">
-        <Section title="d2 : C2 -\u003e C1 (raw)">
+        <Section title="d2 : C2 → C1 (raw)">
           {d2?.M && d2.M.length? <MatrixView M={d2.M} rows={d2.rows} cols={d2.cols} caption="Rows: edges, Cols: triangles"/> : <div className="text-sm text-gray-600">(build boundaries)</div>}
         </Section>
-        <Section title="d1 : C1 -\u003e C0 (raw)">
+        <Section title="d1 : C1 → C0 (raw)">
           {d1?.M && d1.M.length? <MatrixView M={d1.M} rows={d1.rows} cols={d1.cols} caption="Rows: vertices, Cols: edges"/> : <div className="text-sm text-gray-600">(build boundaries)</div>}
         </Section>
       </div>
@@ -646,9 +646,7 @@ export default function App(){
         )}
       </Section>
 
-      <div className="text-xs text-gray-500 mt-8">
-        Tip: Raw matrices -\u003e RREF (pivots over Q) -\u003e SNF diagonal (torsion over Z). Use small grids (torus 3x3; Klein/RP^2 4x4) in live demos.
-      </div>
+      
     </div>
   );
 }
