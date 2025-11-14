@@ -302,97 +302,464 @@ function sanitizeForJsxText(s: string){
 // UI Components
 // ======================================================
 
-function TriangulationView({space, m, n, faces}:{space:'torus'|'klein'|'rp2'; m:number; n:number; faces:number[][]}){
-  const pos = useMemo(()=>{
-    const P = new Map<number,{x:number,y:number}>();
-    if (space==='rp2'){
-      const R=0.42, cx=0.5, cy=0.5;
-      for(let v=0; v<6; v++){
-        const ang = (2*Math.PI*v)/6 - Math.PI/2;
-        P.set(v,{x: cx + R*Math.cos(ang), y: cy + R*Math.sin(ang)});
+function TriangulationView({
+  space,
+  m,
+  n,
+  faces,
+  selectedSimplex,
+  rp2Decomp,
+}: {
+  space: "torus" | "klein" | "rp2";
+  m: number;
+  n: number;
+  faces: number[][];
+  selectedSimplex: number[] | null;
+  rp2Decomp?: boolean;
+}) {
+  // positions of vertices in the drawing
+  const pos = useMemo(() => {
+    const P = new Map<number, { x: number; y: number }>();
+
+    if (space === "rp2") {
+      const R = 0.42,
+        cx = 0.5,
+        cy = 0.5;
+      for (let v = 0; v < 6; v++) {
+        const ang = (2 * Math.PI * v) / 6 - Math.PI / 2;
+        P.set(v, { x: cx + R * Math.cos(ang), y: cy + R * Math.sin(ang) });
       }
     } else {
-      for(let i=0;i<m;i++) for(let j=0;j<n;j++){
-        const id = i*n + j;
-        P.set(id,{ x: (j+0.5)/n, y: (i+0.5)/m });
+      for (let i = 0; i < m; i++) {
+        for (let j = 0; j < n; j++) {
+          const id = i * n + j;
+          P.set(id, { x: (j + 0.5) / n, y: (i + 0.5) / m });
+        }
       }
     }
+
     return P;
-  },[space,m,n,faces]);
+  }, [space, m, n, faces]);
 
-  const edges = useMemo(()=>{
+  // undirected edges (for base drawing)
+  const edges = useMemo(() => {
     const E = new Set<string>();
-    for(const f of faces){
-      if (f.length!==3) continue;
-      const [a,b,c]=f as number[];
-      const pairs:[[number,number],[number,number],[number,number]]=[[a,b],[b,c],[a,c]];
-      for(const [u,v] of pairs){
-        const uu=Math.min(u,v), vv=Math.max(u,v);
+    for (const f of faces) {
+      if (f.length !== 3) continue;
+      const [a, b, c] = f as number[];
+      [[a, b], [b, c], [a, c]].forEach(([u, v]) => {
+        const uu = Math.min(u, v),
+          vv = Math.max(u, v);
         E.add(`${uu},${vv}`);
-      }
+      });
     }
-    return Array.from(E).map(s=>s.split(',').map(x=>parseInt(x,10)) as [number,number]);
-  },[faces]);
+    return Array.from(E).map(
+      (s) => s.split(",").map((v) => parseInt(v, 10)) as [number, number]
+    );
+  }, [faces]);
 
-  const W=560, H=360;
+  const W = 560,
+    H = 360;
+
+  const isSelectedTriangle = (a: number, b: number, c: number) =>
+    selectedSimplex?.length === 3 &&
+    selectedSimplex.every((v) => [a, b, c].includes(v));
+
+  const isSelectedEdge = (u: number, v: number) =>
+    selectedSimplex?.length === 2 &&
+    ((selectedSimplex[0] === u && selectedSimplex[1] === v) ||
+      (selectedSimplex[0] === v && selectedSimplex[1] === u));
+
+  const isSelectedVertex = (id: number) =>
+    selectedSimplex?.length === 1 && selectedSimplex[0] === id;
+
+  // circle edges for RP² decomposition (boundary of the chosen disk)
+  const circleEdgesRP2 = new Set(["0,1", "1,2", "0,2"]);
+
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" className="rounded-xl border bg-white">
-      {/* Triangles fill */}
-      {faces.filter(f=>f.length===3).map((t,idx)=>{
-        const [a,b,c] = t as number[];
-        const pa = pos.get(a), pb = pos.get(b), pc = pos.get(c);
-        if (!pa || !pb || !pc) return null;
-        const pts = [pa,pb,pc].map(p=>`${p.x*W},${p.y*H}`).join(' ');
-        return <polygon key={idx} points={pts} fill="rgba(59,130,246,0.15)" stroke="rgba(59,130,246,0.6)" strokeWidth={1}/>;
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      width="100%"
+      className="rounded-xl border bg-white"
+    >
+      {/* Arrowhead definition for orientation arrows */}
+      <defs>
+        <marker
+          id="arrow-red"
+          viewBox="0 0 10 10"
+          refX="10"
+          refY="5"
+          markerWidth="7"
+          markerHeight="7"
+          orient="auto"
+          markerUnits="strokeWidth"
+        >
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(220,38,38,1)" />
+        </marker>
+      </defs>
+
+      {/* ===== TRIANGLES ===== */}
+      {faces
+        .filter((f) => f.length === 3)
+        .map((t, idx) => {
+          const [a, b, c] = t as number[];
+          const pa = pos.get(a),
+            pb = pos.get(b),
+            pc = pos.get(c);
+          if (!pa || !pb || !pc) return null;
+
+          const pts = [pa, pb, pc]
+            .map((p) => `${p.x * W},${p.y * H}`)
+            .join(" ");
+
+          const sel = isSelectedTriangle(a, b, c);
+
+          // geometric orientation (cross product)
+          const cross =
+            (pb.x - pa.x) * (pc.y - pa.y) -
+            (pb.y - pa.y) * (pc.x - pa.x);
+          const ccw = cross > 0;
+
+          // centroid
+          const cx = (pa.x + pb.x + pc.x) / 3;
+          const cy = (pa.y + pb.y + pc.y) / 3;
+
+          // is this the chosen "disk" triangle in RP²? (we pick [0,1,2])
+          const vertsSorted = [a, b, c].slice().sort((x, y) => x - y).join(",");
+          const isDiskTri =
+            space === "rp2" && rp2Decomp && vertsSorted === "0,1,2";
+
+          const fillColor = sel
+            ? "rgba(239,68,68,0.35)"
+            : space === "rp2" && rp2Decomp
+            ? isDiskTri
+              ? "rgba(251,146,60,0.65)" // orange disk
+              : "rgba(59,130,246,0.20)" // blue Möbius strip
+            : "rgba(59,130,246,0.15)";
+
+          const strokeColor = sel
+            ? "rgba(220,38,38,1)"
+            : space === "rp2" && rp2Decomp && isDiskTri
+            ? "rgba(194,65,12,1)"
+            : "rgba(59,130,246,0.6)";
+
+          const strokeWidth = sel
+            ? 3
+            : space === "rp2" && rp2Decomp && isDiskTri
+            ? 2
+            : 1;
+
+          return (
+            <g key={idx}>
+              <polygon
+                points={pts}
+                fill={fillColor}
+                stroke={strokeColor}
+                strokeWidth={strokeWidth}
+              />
+
+              {/* orientation symbol ONLY when triangle selected */}
+              {sel && (
+                <text
+                  x={cx * W}
+                  y={cy * H}
+                  fontSize={18}
+                  textAnchor="middle"
+                  alignmentBaseline="middle"
+                  fill="rgba(31,41,55,0.9)"
+                >
+                  {ccw ? "⟲" : "⟳"}
+                </text>
+              )}
+
+              {/* boundary arrows [a,b], [b,c], [c,a] when triangle selected */}
+              {sel &&
+                [
+                  [a, b],
+                  [b, c],
+                  [c, a],
+                ].map(([u, v], j) => {
+                  const p1 = pos.get(u)!;
+                  const p2 = pos.get(v)!;
+                  const x1 = (p1.x + 0.3 * (p2.x - p1.x)) * W;
+                  const y1 = (p1.y + 0.3 * (p2.y - p1.y)) * H;
+                  const x2 = (p1.x + 0.7 * (p2.x - p1.x)) * W;
+                  const y2 = (p1.y + 0.7 * (p2.y - p1.y)) * H;
+
+                  return (
+                    <line
+                      key={`tri-edge-orient-${idx}-${j}`}
+                      x1={x1}
+                      y1={y1}
+                      x2={x2}
+                      y2={y2}
+                      stroke="rgba(220,38,38,1)"
+                      strokeWidth={2}
+                      markerEnd="url(#arrow-red)"
+                    />
+                  );
+                })}
+            </g>
+          );
+        })}
+
+      {/* ===== BASE EDGES ===== */}
+      {edges.map(([u, v], i) => {
+        const pu = pos.get(u),
+          pv = pos.get(v);
+        if (!pu || !pv) return null;
+
+        const sel = isSelectedEdge(u, v);
+        const keySorted = [u, v].slice().sort((a, b) => a - b).join(",");
+        const isCircleEdge =
+          space === "rp2" && rp2Decomp && circleEdgesRP2.has(keySorted);
+
+        const edgeStroke = sel
+          ? "rgba(220,38,38,1)"
+          : isCircleEdge
+          ? "rgba(16,185,129,1)" // green attaching circle
+          : "rgba(17,24,39,0.7)";
+
+        const edgeWidth = sel ? 3 : isCircleEdge ? 2.4 : 1.4;
+
+        return (
+          <line
+            key={`e${i}`}
+            x1={pu.x * W}
+            y1={pu.y * H}
+            x2={pv.x * W}
+            y2={pv.y * H}
+            stroke={edgeStroke}
+            strokeWidth={edgeWidth}
+          />
+        );
       })}
-      {/* Edges overlay */}
-      {edges.map(([u,v],i)=>{
-        const pu = pos.get(u), pv = pos.get(v);
-        if(!pu || !pv) return null;
-        return <line key={`e${i}`} x1={pu.x*W} y1={pu.y*H} x2={pv.x*W} y2={pv.y*H} stroke="rgba(17,24,39,0.6)" strokeWidth={1.2}/>;
+
+      {/* ===== EXTRA ARROW FOR SELECTED 1-SIMPLEX ===== */}
+      {selectedSimplex &&
+        selectedSimplex.length === 2 &&
+        (() => {
+          const [u, v] = selectedSimplex;
+          const pu = pos.get(u),
+            pv = pos.get(v);
+          if (!pu || !pv) return null;
+
+          const x1 = (pu.x + 0.35 * (pv.x - pu.x)) * W;
+          const y1 = (pu.y + 0.35 * (pv.y - pu.y)) * H;
+          const x2 = (pu.x + 0.65 * (pv.x - pu.x)) * W;
+          const y2 = (pu.y + 0.65 * (pv.y - pu.y)) * H;
+
+          return (
+            <line
+              x1={x1}
+              y1={y1}
+              x2={x2}
+              y2={y2}
+              stroke="rgba(220,38,38,1)"
+              strokeWidth={3}
+              markerEnd="url(#arrow-red)"
+            />
+          );
+        })()}
+
+      {/* ===== VERTICES ===== */}
+      {Array.from(pos.entries()).map(([id, p]) => {
+        const sel = isSelectedVertex(id);
+        return (
+          <g key={`v${id}`}>
+            <circle
+              cx={p.x * W}
+              cy={p.y * H}
+              r={sel ? 7 : 3.2}
+              fill={sel ? "rgba(220,38,38,1)" : "#111827"}
+            />
+            <text
+              x={p.x * W + 6}
+              y={p.y * H - 6}
+              fontSize={11}
+              fill="#111827"
+            >
+              {id}
+            </text>
+          </g>
+        );
       })}
-      {/* Vertices */}
-      {Array.from(pos.entries()).map(([id,p])=> (
-        <g key={`v${id}`}>
-          <circle cx={p.x*W} cy={p.y*H} r={3.2} fill="#111827"/>
-          <text x={p.x*W+6} y={p.y*H-6} fontSize={11} fill="#111827">{id}</text>
-        </g>
-      ))}
     </svg>
   );
 }
 
-function Section({title, children}:{title:string; children: React.ReactNode}){
+
+
+function Section({
+  title,
+  children,
+  withSVGToggle,
+  isWithSVG,
+  onToggleWithSVG,
+}: {
+  title: string;
+  children: React.ReactNode;
+  withSVGToggle?: boolean;
+  isWithSVG?: boolean;
+  onToggleWithSVG?: (checked: boolean) => void;
+}) {
+  const [open, setOpen] = useState(true);
+
   return (
-    <div className="mb-6 p-4 rounded-2xl shadow bg-white">
-      <h2 className="text-xl font-semibold mb-2">{title}</h2>
-      {children}
-    </div>
+    <section className="mb-4 rounded-2xl shadow bg-white p-4 h-full flex flex-col">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-gray-700">{title}</h2>
+        <div className="flex items-center gap-2">
+          {withSVGToggle && (
+            <label className="inline-flex items-center gap-1 text-xs text-gray-600">
+              <input
+                type="checkbox"
+                className="rounded border-gray-300"
+                checked={isWithSVG}
+                onChange={(e) => onToggleWithSVG?.(e.target.checked)}
+              />
+              <span>📍 Pin with SVG</span>
+            </label>
+          )}
+          <button
+            type="button"
+            onClick={() => setOpen((o) => !o)}
+            className="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-50"
+          >
+            {open ? "Hide" : "Show"}
+          </button>
+        </div>
+      </div>
+
+      {open && (
+        <div className="mt-2 text-sm text-gray-800 flex-1">
+          {children}
+        </div>
+      )}
+    </section>
   );
 }
 
-function MatrixView({M, rows=[], cols=[], caption}:{M:bigint[][]; rows:number[][]; cols:number[][]; caption?:string}){
-  if (!M || !M.length) return <div className="text-sm text-gray-600">(empty)</div>;
+function MatrixView({
+  M,
+  rows = [],
+  cols = [],
+  caption,
+  activeCol = null,
+  onColClick,
+}: {
+  M: (number | bigint | string)[][];
+  rows: number[][];
+  cols: number[][];
+  caption?: string;
+  activeCol?: number | null;
+  onColClick?: (col: number[], j: number) => void;
+}) {
+  if (!M || !M.length)
+    return <div className="text-sm text-gray-600">(empty)</div>;
+
   return (
     <div className="overflow-auto">
-      {caption && <div className="text-sm text-gray-700 mb-1">{caption}</div>}
+      {caption && (
+        <div className="text-sm text-gray-700 mb-1">{caption}</div>
+      )}
+
       <table className="text-xs border-collapse">
         <thead>
           <tr>
-            <th className="px-1 py-0.5 text-left text-gray-500">Rows / Cols</th>
-            {cols.map((c, j)=>(<th key={j} className="px-1 py-0.5 border-b text-gray-700">{`(${c.join(',')})`}</th>))}
+            <th className="px-1 py-0.5 text-left text-gray-500">
+              Rows / Cols
+            </th>
+            {cols.map((c, j) => {
+              const isActive = activeCol === j;
+              return (
+                <th
+                  key={j}
+                  className={
+                    "px-1 py-0.5 border-b text-gray-700" +
+                    (onColClick ? " cursor-pointer hover:bg-blue-100" : "")
+                  }
+                  style={
+                    isActive
+                      ? { backgroundColor: "#bfdbfe", color: "black", fontWeight: 600 }
+                      : {}
+                  }
+                  onClick={onColClick ? () => onColClick(c, j) : undefined}
+                >
+                  ({c.join(",")})
+                </th>
+              );
+            })}
           </tr>
         </thead>
+
         <tbody>
-          {rows.map((r,i)=>(
-            <tr key={i}>
-              <td className="px-1 py-0.5 pr-2 text-gray-700 border-r whitespace-nowrap">({r.join(',')})</td>
-              {M[i].map((x,j)=>(<td key={j} className="px-1 py-0.5 text-center">{x.toString()}</td>))}
-            </tr>
-          ))}
+          {rows.map((r, i) => {
+            // value in the active column
+            const rawVal =
+              activeCol != null ? M[i][activeCol] : undefined;
+            const numVal =
+              rawVal === undefined || rawVal === null
+                ? 0
+                : Number(rawVal); // handles "0", 0, 0n, "1", -1, etc.
+
+            const rowUsed =
+              activeCol != null && !Number.isNaN(numVal) && numVal !== 0;
+
+            return (
+              <tr key={i}>
+                {/* Row label cell: blue bg only if rowUsed */}
+                <td
+                  className="px-1 py-0.5 pr-2 border-r whitespace-nowrap"
+                  style={
+                    rowUsed
+                      ? {
+                          backgroundColor: "#bfdbfe",
+                          color: "black",
+                          fontWeight: 600,
+                        }
+                      : {}
+                  }
+                >
+                  ({r.join(",")})
+                </td>
+
+                {/* Data cells */}
+                {M[i].map((x, j) => {
+                  const cellNum =
+                    x === undefined || x === null ? 0 : Number(x);
+                  const highlight =
+                    activeCol === j &&
+                    !Number.isNaN(cellNum) &&
+                    cellNum !== 0; // only ±1, not 0
+
+                  return (
+                    <td
+                      key={j}
+                      className="px-1 py-0.5 text-center"
+                      style={
+                        highlight
+                          ? {
+                              backgroundColor: "#bfdbfe",
+                              color: "black",
+                              fontWeight: 600,
+                            }
+                          : {}
+                      }
+                    >
+                      {typeof x === "bigint" ? x.toString() : String(x)}
+                    </td>
+                  );
+                })}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
-      <div className="text-[11px] text-gray-500 mt-1">shape = ({M.length}, {M[0]?.length||0})</div>
+
+      <div className="text-[11px] text-gray-500 mt-1">
+        shape = ({M.length}, {M[0]?.length || 0})
+      </div>
     </div>
   );
 }
@@ -423,140 +790,381 @@ function MatrixViewFrac({M, rows=[], cols=[], caption}:{M:Frac[][]; rows:number[
   );
 }
 
-export default function App(){
-  const [space, setSpace] = useState<'torus'|'klein'|'rp2'>('torus');
+
+function ChainsView({
+  by,
+  selected,
+  onSelect,
+}: {
+  by: Map<number, number[][]>;
+  selected: number[] | null;
+  onSelect: (sigma: number[] | null) => void;
+}) {
+  if (!by || by.size === 0) {
+    return <div className="text-sm text-gray-600">(build chains to see C_k)</div>;
+  }
+
+  const dims = Array.from(by.keys()).sort((a, b) => a - b);
+  const maxPerDim = 40;
+
+  const labelForK = (k: number) => {
+    if (k === 0) return "vertices";
+    if (k === 1) return "edges";
+    if (k === 2) return "triangles";
+    return `${k}-simplices`;
+  };
+
+  const handleSimplexClick = (s: number[]) => {
+    // Check if this simplex is already selected
+    const isAlreadySelected =
+      selected &&
+      selected.length === s.length &&
+      selected.every((v, idx) => v === s[idx]);
+
+    // If already selected, deselect it (pass null)
+    // Otherwise, select it
+    onSelect(isAlreadySelected ? null : s);
+  };
+
+  return (
+    <div className="space-y-4">
+      {dims.map((k) => {
+        const simplices = by.get(k) || [];
+        const shown = simplices.slice(0, maxPerDim);
+        const extra = simplices.length - shown.length;
+
+        return (
+          <div key={k} className="rounded-2xl border bg-gray-50 px-3 py-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+              <div className="font-semibold text-sm">{`C_${k}`}</div>
+              <div className="flex items-center gap-2 text-[11px] text-gray-600">
+                <span className="px-2 py-0.5 rounded-full bg-white border">
+                  {labelForK(k)}
+                </span>
+                <span className="px-2 py-0.5 rounded-full bg-white border">
+                  {`dim = ${simplices.length}`}
+                </span>
+              </div>
+            </div>
+
+            {simplices.length === 0 ? (
+              <div className="text-xs text-gray-600 italic">
+                (no simplices in this dimension)
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-wrap gap-1">
+                  {shown.map((s, i) => {
+                    const isSelected =
+                      selected &&
+                      selected.length === s.length &&
+                      selected.every((v, idx) => v === s[idx]);
+
+                    return (
+                      <button
+                        key={i}
+                        onClick={() => handleSimplexClick(s)}
+                        className={
+                          "inline-flex items-center px-2 py-1 rounded-full border text-[11px] font-mono transition " +
+                          (isSelected
+                            ? "bg-blue-500 text-white border-blue-600"
+                            : "bg-white hover:bg-blue-100")
+                        }
+                      >
+                        [{s.join(", ")}]
+                      </button>
+                    );
+                  })}
+                </div>
+                {extra > 0 && (
+                  <div className="mt-1 text-[11px] text-gray-500">
+                    … + {extra} more simplices in C_{k}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export default function App() {
+  // ----------------- STATE -----------------
+  const [space, setSpace] = useState<"torus" | "klein" | "rp2">("torus");
   const [m, setM] = useState<number>(3);
   const [n, setN] = useState<number>(3);
+  const [snfDiag, setSnfDiag] = useState<bigint[] | null>(null);
+
+  const [d2ShowHelp, setD2ShowHelp] = useState(false);
+  const [d1ShowHelp, setD1ShowHelp] = useState(false);
 
   const [simplices, setSimplices] = useState<number[][]>([]);
   const [faces, setFaces] = useState<number[][]>([]);
   const [by, setBy] = useState<Map<number, number[][]>>(new Map());
-  const [d2, setD2] = useState<{M:bigint[][]; rows:number[][]; cols:number[][]} | null>(null);
-  const [d1, setD1] = useState<{M:bigint[][]; rows:number[][]; cols:number[][]} | null>(null);
-  const [rref2, setRref2] = useState<{R:Frac[][]; pivots:{row:number,col:number}[]} | null>(null);
-  const [rref1, setRref1] = useState<{R:Frac[][]; pivots:{row:number,col:number}[]} | null>(null);
+  
+  const [activeD2Col, setActiveD2Col] = useState<number | null>(null);
+  const [activeD1Col, setActiveD1Col] = useState<number | null>(null);
+
+  const [d2, setD2] = useState<{
+    M: bigint[][];
+    rows: number[][];
+    cols: number[][];
+  } | null>(null);
+  const [d1, setD1] = useState<{
+    M: bigint[][];
+    rows: number[][];
+    cols: number[][];
+  } | null>(null);
+
+  const [rref2, setRref2] = useState<{
+    R: Frac[][];
+    pivots: { row: number; col: number }[];
+  } | null>(null);
+  const [rref1, setRref1] = useState<{
+    R: Frac[][];
+    pivots: { row: number; col: number }[];
+  } | null>(null);
+
   const [trace, setTrace] = useState<string[]>([]);
-  const [summary, setSummary] = useState<{k:number; n_k:number; rank_dk:number; rank_dk1:number; beta:number; torsion: bigint[]}[]>([]);
+  const [summary, setSummary] = useState<
+    {
+      k: number;
+      n_k: number;
+      rank_dk: number;
+      rank_dk1: number;
+      beta: number;
+      torsion: bigint[];
+    }[]
+  >([]);
   const [tests, setTests] = useState<string[]>([]);
 
-  function log(msg: string){ setTrace(t=>[...t, sanitizeForJsxText(msg)]); }
-  function logTest(msg: string){ setTests(t=>[...t, sanitizeForJsxText(msg)]); }
+  const [selectedSimplex, setSelectedSimplex] = useState<number[] | null>(null);
+  const [rp2Decomp, setRp2Decomp] = useState(false);
 
-  const go1_triangulate = ()=>{
-    setTrace([]); setSummary([]); setTests([]); setD1(null); setD2(null); setRref1(null); setRref2(null);
+  // step-by-step controls for d2, d1
+  const [d2VisibleCols, setD2VisibleCols] = useState(0);
+  const [d1VisibleCols, setD1VisibleCols] = useState(0);
+
+    // toggles for side-by-side view with SVG
+  const [chainsWithSVG, setChainsWithSVG] = useState(false);
+  const [d2WithSVG, setD2WithSVG] = useState(false);
+  const [d1WithSVG, setD1WithSVG] = useState(false);
+
+  // ----------------- LOG HELPERS -----------------
+  function log(msg: string) {
+    setTrace((t) => [...t, sanitizeForJsxText(msg)]);
+  }
+  function logTest(msg: string) {
+    setTests((t) => [...t, sanitizeForJsxText(msg)]);
+  }
+
+  // ----------------- PIPELINE ACTIONS -----------------
+  const go1_triangulate = () => {
+    setTrace([]);
+    setSummary([]);
+    setTests([]);
+    setD1(null);
+    setD2(null);
+    setRref1(null);
+    setRref2(null);
+    setBy(new Map());
+    setSelectedSimplex(null);
+
     const { simplices, faces } = buildComplex(space, m, n);
-    setSimplices(simplices as number[][]); setFaces(faces as unknown as number[][]);
-    log(`Built triangulation: ${faces.length} triangles; vertices <= ${m*n}`);
+    setSimplices(simplices as number[][]);
+    setFaces(faces as number[][]);
+    log(
+      `Built triangulation: ${faces.length} triangles; vertices ≤ ${
+        m * n
+      } (depending on space)`
+    );
   };
 
-  const go2_chains = ()=>{
+  const go2_chains = () => {
     const g = groupByDim(simplices);
     setBy(g);
-    const n0=(g.get(0)||[]).length, n1=(g.get(1)||[]).length, n2=(g.get(2)||[]).length;
+    const n0 = (g.get(0) || []).length;
+    const n1 = (g.get(1) || []).length;
+    const n2 = (g.get(2) || []).length;
     log(`Chain groups: dim C0=${n0}, C1=${n1}, C2=${n2}`);
   };
 
-  const go3_boundaries = ()=>{
-    if (!by.size){ log("Please build chains first."); return; }
-    const D2 = boundaryMatrix(by,2); const D1 = boundaryMatrix(by,1);
-    setD2(D2); setD1(D1);
-    log(`Built boundary matrices: d2 shape=(${D2.M.length},${D2.M[0]?.length||0}); d1 shape=(${D1.M.length},${D1.M[0]?.length||0})`);
+  const go3_boundaries = () => {
+    if (!by.size) {
+      log("Please build chains first.");
+      return;
+    }
+    const D2 = boundaryMatrix(by, 2);
+    const D1 = boundaryMatrix(by, 1);
+    setD2(D2);
+    setD1(D1);
+    // restart step view
+    setD2VisibleCols(0);
+    setD1VisibleCols(0);
+    log(
+      `Built boundary matrices: d2 shape=(${
+        D2.M.length
+      },${D2.M[0]?.length || 0}); d1 shape=(${
+        D1.M.length
+      },${D1.M[0]?.length || 0})`
+    );
   };
 
-  const go4_ranks = ()=>{
-    if (!d1 || !d2){ log("Please build boundary matrices first."); return; }
-    const r1 = rankOverQ(d1.M); const r2=rankOverQ(d2.M);
+  const go4_ranks = () => {
+    if (!d1 || !d2) {
+      log("Please build boundary matrices first.");
+      return;
+    }
+    const r1 = rankOverQ(d1.M);
+    const r2 = rankOverQ(d2.M);
     log(`Ranks over Q: rank(d1)=${r1}, rank(d2)=${r2}`);
   };
 
-  const go5_reduce = ()=>{
-    if (!d1 || !d2){ log("Please build boundary matrices first."); return; }
-    const R2 = rrefOverQ(d2.M); const R1 = rrefOverQ(d1.M);
-    setRref2(R2); setRref1(R1);
-    const pivotsLabel = `Pivots: ${R2.pivots.map(p=>`(r${p.row},c${p.col})`).join(', ')}`;
+  const go5_reduce = () => {
+    if (!d1 || !d2) {
+      log("Please build boundary matrices first.");
+      return;
+    }
+    const R2 = rrefOverQ(d2.M);
+    const R1 = rrefOverQ(d1.M);
+    setRref2(R2);
+    setRref1(R1);
+    const pivotsLabel = `Pivots d2: ${R2.pivots
+      .map((p) => `(r${p.row},c${p.col})`)
+      .join(", ")}`;
     log(`Computed RREF over Q for d2 and d1. ${pivotsLabel}`);
   };
 
-  const go6_snf = ()=>{
-    if (!d2){ log("Please build boundary matrices first."); return; }
+  const go6_snf = () => {
+    if (!d2) {
+      log("Please build boundary matrices first.");
+      return;
+    }
     const diag = snfDiagonal(d2.M);
-    const tors = diag.filter(x=> x!==0n && x!==1n && x!==-1n).map(x=> (x<0n? -x:x));
-    log(`SNF diag(d2): [${diag.join(', ')}]; torsion factors (\u003e1): [${tors.join(', ')}]`);
+    const tors = diag
+      .filter((x) => x !== 0n && x !== 1n && x !== -1n)
+      .map((x) => (x < 0n ? -x : x));
+
+    setSnfDiag(diag);  // <--- NEW: save for display
+
+    log(
+      `SNF diag(d2): [${diag.join(
+        ", "
+      )}]; torsion factors (>1): [${tors.join(", ")}]`
+    );
   };
 
-  const go7_homology = ()=>{
-    if (!by.size){ log("Please build chains first."); return; }
+
+  const go7_homology = () => {
+    if (!by.size) {
+      log("Please build chains first.");
+      return;
+    }
     const res = bettiAndTorsion(by);
     setSummary(res);
     log("Computed homology summary.");
   };
 
-  const runTests = ()=>{
+  const runTests = () => {
     const results: string[] = [];
-    const check = (name:string, cond:boolean, details:string)=>{
-      results.push(`${cond ? '[OK]' : '[FAIL]'} ${name} - ${sanitizeForJsxText(details)}`);
+    const check = (name: string, cond: boolean, details: string) => {
+      results.push(
+        `${cond ? "[OK]" : "[FAIL]"} ${name} - ${sanitizeForJsxText(details)}`
+      );
     };
-    // Test 1: S^1 (cycle of 3 edges)
+
+    // S^1 test
     const Hs1 = summarizeHomology(simplicesCycle3());
-    const b0s1 = Hs1.find(x=>x.k===0)?.beta ?? -1;
-    const b1s1 = Hs1.find(x=>x.k===1)?.beta ?? -1;
-    check('S^1 betti', b0s1===1 && b1s1===1, `beta0=${b0s1}, beta1=${b1s1} (expect 1,1)`);
+    const b0s1 = Hs1.find((x) => x.k === 0)?.beta ?? -1;
+    const b1s1 = Hs1.find((x) => x.k === 1)?.beta ?? -1;
+    check(
+      "S^1 betti",
+      b0s1 === 1 && b1s1 === 1,
+      `beta0=${b0s1}, beta1=${b1s1} (expect 1,1)`
+    );
 
-    // Test 2: filled triangle (contractible)
+    // filled triangle test
     const Hc = summarizeHomology(simplicesFilledTriangle());
-    const b0c = Hc.find(x=>x.k===0)?.beta ?? -1;
-    const b1c = Hc.find(x=>x.k===1)?.beta ?? -1;
-    const b2c = Hc.find(x=>x.k===2)?.beta ?? -1;
-    check('Filled triangle betti', b0c===1 && b1c===0 && b2c===0, `beta=(${b0c},${b1c},${b2c}) expect (1,0,0)`);
-
-    // Test 3: torus 3x3 - expect (1,2,1) and no torsion in H1
-    const { simplices: T2simp } = buildComplex('torus',3,3);
-    const HT2 = bettiAndTorsion(groupByDim(T2simp as number[][]));
-    const B0t = HT2.find(x=>x.k===0)?.beta ?? -1;
-    const B1t = HT2.find(x=>x.k===1)?.beta ?? -1;
-    const B2t = HT2.find(x=>x.k===2)?.beta ?? -1;
-    const torsT = (HT2.find(x=>x.k===1)?.torsion || []).length;
-    check('T^2 betti,torsion', B0t===1 && B1t===2 && B2t===1 && torsT===0, `beta=(${B0t},${B1t},${B2t}), tors|H1|=${torsT} expect (1,2,1),0`);
-
-    // Test 4: Klein 4x4 - expect H0=Z, H1=Z (+) Z/2, H2=0
-    const { simplices: Ks } = buildComplex('klein',4,4);
-    const HK = bettiAndTorsion(groupByDim(Ks as number[][]));
-    const B0k = HK.find(x=>x.k===0)?.beta ?? -1;
-    const B1k = HK.find(x=>x.k===1)?.beta ?? -1;
-    const B2k = HK.find(x=>x.k===2)?.beta ?? -1;
-    const torsK = (HK.find(x=>x.k===1)?.torsion || []).includes(2n);
-    check('Klein betti,torsion', B0k===1 && B1k===1 && B2k===0 && torsK, `beta=(${B0k},${B1k},${B2k}), torsion contains 2? ${torsK}`);
-
-    // Test 5: RP^2 - expect H0=Z, H1=Z/2, H2=0 (beta1=0 over Q)
-    const { simplices: RPs } = buildComplex('rp2',4,4);
-    const HRP = bettiAndTorsion(groupByDim(RPs as number[][]));
-    const B0r = HRP.find(x=>x.k===0)?.beta ?? -1;
-    const B1r = HRP.find(x=>x.k===1)?.beta ?? -1;
-    const B2r = HRP.find(x=>x.k===2)?.beta ?? -1;
-    const torsRP = (HRP.find(x=>x.k===1)?.torsion || []).includes(2n);
-    check('RP^2 betti,torsion', B0r===1 && B1r===0 && B2r===0 && torsRP, `beta=(${B0r},${B1r},${B2r}), torsion contains 2? ${torsRP}`);
+    const b0c = Hc.find((x) => x.k === 0)?.beta ?? -1;
+    const b1c = Hc.find((x) => x.k === 1)?.beta ?? -1;
+    const b2c = Hc.find((x) => x.k === 2)?.beta ?? -1;
+    check(
+      "Filled triangle betti",
+      b0c === 1 && b1c === 0 && b2c === 0,
+      `beta=(${b0c},${b1c},${b2c}) expect (1,0,0)`
+    );
 
     setTests(results);
   };
 
-  const trianglesPreview = useMemo(()=>faces.slice(0, 40), [faces]);
-  const pivotsCaption2 = useMemo(() =>
-    rref2 ? `Pivots: ${rref2.pivots.map(p=>`(r${p.row},c${p.col})`).join(', ')}` : '',
-  [rref2]);
+  // ----------------- MEMOS / EFFECTS -----------------
+  const trianglesPreview = useMemo(() => faces.slice(0, 40), [faces]);
+  const pivotsCaption2 = useMemo(
+    () =>
+      rref2
+        ? `Pivots: ${rref2.pivots
+            .map((p) => `(r${p.row},c${p.col})`)
+            .join(", ")}`
+        : "",
+    [rref2]
+  );
 
   useEffect(() => {
     go1_triangulate();
   }, []);
 
-  return (
-    <div className="p-6 max-w-6xl mx-auto font-sans">
-      <h1 className="text-2xl font-bold mb-1">Interactive Homology (Simplicial, Z & R)</h1>
-      <p className="text-sm text-gray-700 mb-4">Percorra as etapas: <b>triangulação</b> → <b>cadeias</b> → <b>matrizes de fronteira</b> → <b>postos</b> → <b>RREF</b> (ℚ) → <b>SNF</b> (ℤ) → <b>homologia</b>.</p>
+  // ----------------- STEP-BY-STEP HELPERS -----------------
+  // d2
+  const totalColsD2 = d2?.cols.length ?? 0;
+  const visibleD2 = d2
+    ? Math.max(0, Math.min(d2VisibleCols, totalColsD2))
+    : 0;
+  const MshowD2 =
+    d2 && d2.M.length
+      ? d2.M.map((row) => row.slice(0, visibleD2))
+      : [];
+  const colsShowD2 =
+    d2 && d2.cols
+      ? d2.cols.slice(0, visibleD2)
+      : [];
 
+  // d1
+  const totalColsD1 = d1?.cols.length ?? 0;
+  const visibleD1 = d1
+    ? Math.max(0, Math.min(d1VisibleCols, totalColsD1))
+    : 0;
+  const MshowD1 =
+    d1 && d1.M.length
+      ? d1.M.map((row) => row.slice(0, visibleD1))
+      : [];
+  const colsShowD1 =
+    d1 && d1.cols
+      ? d1.cols.slice(0, visibleD1)
+      : [];
+
+  // ----------------- JSX -----------------
+return (
+  <div className="min-h-screen bg-gray-100">
+    <div className="p-6 w-[95%] md:w-[80%] mx-auto font-sans bg-white rounded-2xl shadow border-4 border-red-500">
+      <h1 className="text-2xl font-bold mb-1">
+        Interactive Homology (Simplicial, Z & R)
+      </h1>
+      <p className="text-sm text-gray-700 mb-4">
+        Percorra as etapas: <b>triangulação</b> → <b>cadeias</b> → <b>matrizes de fronteira</b> → <b>postos</b> → <b>RREF</b> (ℚ) → <b>SNF</b> (ℤ) → <b>homologia</b>.
+      </p>
+
+      {/* TOP CONTROLS */}
       <div className="grid md:grid-cols-3 gap-4 mb-6">
+        {/* Space / m,n / rp2 toggle */}
         <div className="p-4 rounded-2xl shadow bg-white">
           <label className="text-sm text-gray-700">Space</label>
-          <select value={space} onChange={e=>setSpace(e.target.value as any)} className="w-full mt-1 p-2 rounded-lg border">
+          <select
+            value={space}
+            onChange={(e) => setSpace(e.target.value as any)}
+            className="w-full mt-1 p-2 rounded-lg border"
+          >
             <option value="torus">Torus T^2</option>
             <option value="klein">Klein bottle K</option>
             <option value="rp2">RP^2</option>
@@ -564,89 +1172,770 @@ export default function App(){
           <div className="flex gap-3 mt-3">
             <div className="flex-1">
               <label className="text-sm text-gray-700">m</label>
-              <input type="number" min={2} value={m} onChange={e=>setM(parseInt(e.target.value||"0",10))} className="w-full mt-1 p-2 rounded-lg border"/>
+              <input
+                type="number"
+                min={2}
+                value={m}
+                onChange={(e) => setM(parseInt(e.target.value || "0", 10))}
+                className="w-full mt-1 p-2 rounded-lg border"
+              />
             </div>
             <div className="flex-1">
               <label className="text-sm text-gray-700">n</label>
-              <input type="number" min={2} value={n} onChange={e=>setN(parseInt(e.target.value||"0",10))} className="w-full mt-1 p-2 rounded-lg border"/>
+              <input
+                type="number"
+                min={2}
+                value={n}
+                onChange={(e) => setN(parseInt(e.target.value || "0", 10))}
+                className="w-full mt-1 p-2 rounded-lg border"
+              />
             </div>
           </div>
+
+          {space === "rp2" && (
+            <div className="mt-3 text-xs text-gray-700">
+              <label className="inline-flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  className="rounded border-gray-300"
+                  checked={rp2Decomp}
+                  onChange={(e) => setRp2Decomp(e.target.checked)}
+                />
+                <span>Highlight RP² as Möbius strip + disk</span>
+              </label>
+            </div>
+          )}
         </div>
+
+        {/* Pipeline buttons */}
         <div className="p-4 rounded-2xl shadow bg-white flex flex-col gap-2">
-          <button onClick={go1_triangulate} className="px-3 py-2 rounded-xl shadow text-sm bg-blue-600 text-white hover:bg-blue-700">1) Triangulate</button>
-          <button onClick={go2_chains} className="px-3 py-2 rounded-xl shadow text-sm bg-blue-600 text-white hover:bg-blue-700">2) Build chains</button>
-          <button onClick={go3_boundaries} className="px-3 py-2 rounded-xl shadow text-sm bg-blue-600 text-white hover:bg-blue-700">3) Build d_k matrices</button>
-          <button onClick={go4_ranks} className="px-3 py-2 rounded-xl shadow text-sm bg-blue-600 text-white hover:bg-blue-700">4) Ranks over Q</button>
-          <button onClick={go5_reduce} className="px-3 py-2 rounded-xl shadow text-sm bg-blue-600 text-white hover:bg-blue-700">5) Reduce (RREF over Q)</button>
-          <button onClick={go6_snf} className="px-3 py-2 rounded-xl shadow text-sm bg-blue-600 text-white hover:bg-blue-700">6) Smith Normal Form (Z)</button>
-          <button onClick={go7_homology} className="px-3 py-2 rounded-xl shadow text-sm bg-green-600 text-white hover:bg-green-700">7) Homology summary</button>
-          <button onClick={runTests} className="mt-2 px-3 py-2 rounded-xl shadow text-sm bg-emerald-600 text-white hover:bg-emerald-700">Run internal tests</button>
+          <button
+            onClick={go1_triangulate}
+            className="px-3 py-2 rounded-xl shadow text-sm bg-blue-600 text-white hover:bg-blue-700"
+          >
+            1) Triangulate
+          </button>
+          <button
+            onClick={go2_chains}
+            className="px-3 py-2 rounded-xl shadow text-sm bg-blue-600 text-white hover:bg-blue-700"
+          >
+            2) Build chains
+          </button>
+          <button
+            onClick={go3_boundaries}
+            className="px-3 py-2 rounded-xl shadow text-sm bg-blue-600 text-white hover:bg-blue-700"
+          >
+            3) Build d_k matrices
+          </button>
+          <button
+            onClick={go4_ranks}
+            className="px-3 py-2 rounded-xl shadow text-sm bg-blue-600 text-white hover:bg-blue-700"
+          >
+            4) Ranks over Q
+          </button>
+          <button
+            onClick={go5_reduce}
+            className="px-3 py-2 rounded-xl shadow text-sm bg-blue-600 text-white hover:bg-blue-700"
+          >
+            5) Reduce (RREF over Q)
+          </button>
+          <button
+            onClick={go6_snf}
+            className="px-3 py-2 rounded-xl shadow text-sm bg-blue-600 text-white hover:bg-blue-700"
+          >
+            6) Smith Normal Form (Z)
+          </button>
+          <button
+            onClick={go7_homology}
+            className="px-3 py-2 rounded-xl shadow text-sm bg-green-600 text-white hover:bg-green-700"
+          >
+            7) Homology summary
+          </button>
+          <button
+            onClick={runTests}
+            className="mt-2 px-3 py-2 rounded-xl shadow text-sm bg-emerald-600 text-white hover:bg-emerald-700"
+          >
+            Run internal tests
+          </button>
         </div>
+
+        {/* Log + tests */}
         <div className="p-4 rounded-2xl shadow bg-white text-sm">
           <div className="font-semibold mb-1">Log</div>
           <div className="h-40 overflow-auto border rounded-lg p-2 bg-gray-50">
-            {trace.map((t,i)=>(<div key={i} className="whitespace-pre-wrap">- {t}</div>))}
+            {trace.map((t, i) => (
+              <div key={i} className="whitespace-pre-wrap">
+                - {t}
+              </div>
+            ))}
           </div>
           <div className="font-semibold mt-3 mb-1">Tests</div>
           <div className="h-32 overflow-auto border rounded-lg p-2 bg-gray-50">
-            {tests.length===0? <div className="text-gray-500">(no tests run yet)</div> : tests.map((t,i)=>(<div key={i}>{t}</div>))}
+            {tests.length === 0 ? (
+              <div className="text-gray-500">(no tests run yet)</div>
+            ) : (
+              tests.map((t, i) => <div key={i}>{t}</div>)
+            )}
           </div>
         </div>
       </div>
 
-      <Section title="Triangles preview (first 40)">
-        {trianglesPreview.length===0? <div className="text-sm text-gray-600">(none yet)</div> : (
-          <div className="grid md:grid-cols-2 gap-2 text-sm">
-            {trianglesPreview.map((t:any,i:number)=>(<div key={i} className="px-2 py-1 rounded-lg bg-gray-50 border">Tri{i}: ({t.join(", ")})</div>))}
-          </div>
-        )}
-      </Section>
-
-      <Section title="Triangulation (SVG preview)">
-        {faces && faces.length? (
-          <div className="w-full">
-            <TriangulationView space={space} m={m} n={n} faces={faces as number[][]}/>
-            <div className="text-xs text-gray-600 mt-2">Os vértices são rotulados pelo id; os triângulos são desenhados semitransparentes com as arestas por cima. RP² usa um arranjo fixo de 6 vértices em um círculo; toro/garrafa de Klein usam uma malha m×n com identificações nas bordas.</div>
-          </div>
-        ) : <div className="text-sm text-gray-600">(triangulate to preview)</div>}
-      </Section>
-
-      <div className="grid md:grid-cols-2 gap-4">
-        <Section title="d2 : C2 → C1 (raw)">
-          {d2?.M && d2.M.length? <MatrixView M={d2.M} rows={d2.rows} cols={d2.cols} caption="Rows: edges, Cols: triangles"/> : <div className="text-sm text-gray-600">(build boundaries)</div>}
+      {/* TRIANGLES PREVIEW AND SVG - ALWAYS TOGETHER */}
+      <div className="grid md:grid-cols-2 gap-4 mb-4">
+        <Section title="Triangles preview (first 40)">
+          {trianglesPreview.length === 0 ? (
+            <div className="text-sm text-gray-600">(none yet)</div>
+          ) : (
+            <div className="grid grid-cols-1 gap-2 text-sm max-h-[400px] overflow-auto">
+              {trianglesPreview.map((t: any, i: number) => (
+                <div key={i} className="px-2 py-1 rounded-lg bg-gray-50 border">
+                  Tri{i}: ({t.join(", ")})
+                </div>
+              ))}
+            </div>
+          )}
         </Section>
-        <Section title="d1 : C1 → C0 (raw)">
-          {d1?.M && d1.M.length? <MatrixView M={d1.M} rows={d1.rows} cols={d1.cols} caption="Rows: vertices, Cols: edges"/> : <div className="text-sm text-gray-600">(build boundaries)</div>}
-        </Section>
-      </div>
 
-      <div className="grid md:grid-cols-2 gap-4">
-        <Section title="RREF(d2) over Q">
-          {rref2?.R && rref2.R.length? (
-            <MatrixViewFrac M={rref2.R} rows={d2!.rows} cols={d2!.cols} caption={pivotsCaption2}/>
-          ) : <div className="text-sm text-gray-600">(click \"Reduce (RREF)\")</div>}
-        </Section>
-        <Section title="RREF(d1) over Q">
-          {rref1?.R && rref1.R.length? <MatrixViewFrac M={rref1.R} rows={d1!.rows} cols={d1!.cols}/> : <div className="text-sm text-gray-600">(click \"Reduce (RREF)\")</div>}
-        </Section>
-      </div>
-
-      <Section title="Homology (Z & R)">
-        {summary.length===0? <div className="text-sm text-gray-600">(compute homology)</div> : (
-          <div className="text-sm">
-            {summary.map(({k,n_k,rank_dk,rank_dk1,beta,torsion})=> (
-              <div key={k} className="mb-1">
-                <div className="font-medium">{`H_${k}:`}</div>
-                <div>{`n_k=${n_k}, rank(d_${k})=${rank_dk}, rank(d_${k+1})=${rank_dk1} =\u003e beta_${k}=${beta}`}</div>
-                <div>{`Z: Z^{beta_${k}} + `}{torsion.length? torsion.map(t=>`Z/${t}`).join(" + ") : "0 (no torsion)"}</div>
-                <div>{`R: dim = beta_${k}`}</div>
+          {faces.length ? (
+            <div className="w-full">
+              <TriangulationView
+                space={space}
+                m={m}
+                n={n}
+                faces={faces as number[][]}
+                selectedSimplex={selectedSimplex}
+                rp2Decomp={rp2Decomp}
+              />
+              <div className="text-xs text-gray-900 mt-2">
+                <strong>💡 Dica:</strong> Clique nos simplexes nas seções abaixo para destacá-los aqui!
               </div>
-            ))}
+            </div>
+          ) : (
+            <div className="text-sm text-gray-600">
+              (triangulate first to see the complex)
+            </div>
+          )}
+      </div>
+
+      {/* CHAINS - Can be pinned with SVG */}
+      {chainsWithSVG ? (
+        <div className="grid md:grid-cols-2 gap-4 mb-4">
+          <Section 
+            title="Chains (simplices grouped by dimension)"
+            withSVGToggle
+            isWithSVG={chainsWithSVG}
+            onToggleWithSVG={setChainsWithSVG}
+          >
+            <div className="max-h-[500px] overflow-auto">
+              <ChainsView
+                by={by}
+                selected={selectedSimplex}
+                onSelect={setSelectedSimplex}
+              />
+            </div>
+          </Section>
+
+          <div className="flex flex-col justify-center">
+            {faces.length ? (
+              <div className="w-full">
+                <TriangulationView
+                  space={space}
+                  m={m}
+                  n={n}
+                  faces={faces as number[][]}
+                  selectedSimplex={selectedSimplex}
+                  rp2Decomp={rp2Decomp}
+                />
+                <div className="text-xs text-gray-900 mt-2">
+                  <strong>💡 Dica:</strong> Clique nos simplexes para destacá-los!
+                </div>
+              </div>
+            ) : (
+              <div className="text-sm text-gray-600">
+                (triangulate first to see the complex)
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <Section
+          title="Chains (simplices grouped by dimension)"
+          withSVGToggle
+          isWithSVG={chainsWithSVG}
+          onToggleWithSVG={setChainsWithSVG}
+        >
+          <ChainsView
+            by={by}
+            selected={selectedSimplex}
+            onSelect={setSelectedSimplex}
+          />
+        </Section>
+      )}
+
+    {/* d2 - Can be pinned with SVG */}
+    {d2WithSVG ? (
+      <div className="grid md:grid-cols-2 gap-4 mb-4 items-stretch">
+        {/* LEFT: d2 matrix */}
+        <Section
+          title="d2 : C2 → C1 (raw)"
+          withSVGToggle
+          isWithSVG={d2WithSVG}
+          onToggleWithSVG={setD2WithSVG}
+        >
+          {d2?.M && d2.M.length ? (
+            <>
+              <MatrixView
+                M={MshowD2}
+                rows={d2.rows}
+                cols={colsShowD2}
+                caption="Rows: edges, Cols: triangles"
+                activeCol={activeD2Col}
+                onColClick={(col, j) => {
+                  // toggle: if you click the same column again, turn it off
+                  setActiveD2Col((prev) => {
+                    const next = prev === j ? null : j;
+                    setSelectedSimplex(next === null ? null : col); // update SVG
+                    return next;
+                  });
+                }}
+              />
+              <div className="mt-2 text-xs text-gray-700 flex flex-wrap items-center gap-2">
+                <span>
+                  Showing {visibleD2} / {totalColsD2} columns
+                </span>
+                <button
+                  className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50"
+                  onClick={() => {
+                    if (!d2) return;
+                    setD2VisibleCols((v) => {
+                      const next = Math.min(v + 1, totalColsD2);
+                      const colIndex = next - 1;
+                      if (colIndex >= 0 && colIndex < d2.cols.length) {
+                        const tri = d2.cols[colIndex];      // e.g. [0,3,4]
+                        setActiveD2Col(colIndex);          // highlight this column in matrix
+                        setSelectedSimplex(tri);           // highlight triangle on SVG
+                      }
+                      return next;
+                    });
+                  }}
+                  disabled={visibleD2 >= totalColsD2}
+                >
+                  Next column of ∂₂
+                </button>
+                <button
+                  className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50"
+                  onClick={() => setD2VisibleCols(0)}
+                  disabled={visibleD2 === 0}
+                >
+                  Reset (hide all)
+                </button>
+                <button
+                  className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50"
+                  onClick={() => setD2VisibleCols(totalColsD2)}
+                  disabled={visibleD2 === totalColsD2}
+                >
+                  Show all
+                </button>
+                {/* Help button */}
+                <button
+                  className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50"
+                  onClick={() =>
+                    setD2ShowHelp((open) => {
+                      const next = !open;
+                      // When opening Help, select the FIRST column as the example
+                      if (!open && d2 && d2.cols.length > 0) {
+                        setActiveD2Col(0);
+                        setSelectedSimplex(d2.cols[0]); // highlight that triangle on the SVG
+                      }
+                      return next;
+                    })
+                  }
+                >
+                  Help
+                </button>
+              </div>
+              {d2ShowHelp && d2 && d2.cols.length > 0 && (
+              (() => {
+                const j = 0; // first column as the example
+                const tri = d2.cols[j]; // e.g. [0,3,4]
+
+                const terms = d2.rows
+                  .map((edge, i) => {
+                    const raw = d2.M[i][j];
+                    const coeff = raw == null ? 0 : Number(raw);
+                    return { edge, coeff };
+                  })
+                  .filter((t) => !Number.isNaN(t.coeff) && t.coeff !== 0);
+
+                return (
+                  <div className="mt-2 text-[11px] text-gray-700 leading-snug">
+                    <div className="font-semibold mb-1">How is ∂₂ computed?</div>
+
+                    <p>
+                      For an oriented triangle [v₀, v₁, v₂], the boundary is the alternating sum
+                      of its oriented edges:
+                    </p>
+                    <pre className="bg-gray-50 rounded px-2 py-1 mt-1 whitespace-pre-wrap">
+            {`∂₂([v₀, v₁, v₂]) = [v₁, v₂] − [v₀, v₂] + [v₀, v₁].`}
+                    </pre>
+
+                    {/* Example built from the FIRST column of the matrix */}
+                    <div className="mt-2 font-semibold">
+                      Example (first column of ∂₂)
+                    </div>
+                    <p className="mt-1">
+                      In the first column, the triangle is [{tri.join(", ")}]. Its boundary,
+                      read from the matrix, is:
+                    </p>
+                    <pre className="bg-gray-50 rounded px-2 py-1 mt-1 whitespace-pre-wrap">
+            {`∂₂([${tri.join(", ")}]) = ${
+              terms.length === 0
+                ? "0"
+                : terms
+                    .map((t, idx) => {
+                      const s = t.coeff === 1 ? "" : t.coeff === -1 ? "−" : `${t.coeff}·`;
+                      const plus = idx === 0 ? "" : " + ";
+                      return `${plus}${s}[${t.edge.join(", ")}]`;
+                    })
+                    .join("")
+            }`}
+                    </pre>
+
+                    <p className="mt-1">
+                      This corresponds exactly to the first column of the matrix:
+                    </p>
+                    <ul className="list-disc ml-4 mt-1">
+                      {terms.map((t, k) => (
+                        <li key={k}>
+                          row [{t.edge.join(", ")}] has value {t.coeff}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-1">
+                      In the table above, that column is highlighted in blue, and the rows
+                      with non-zero entries ({terms
+                        .map((t) => `(${t.edge.join(", ")})`)
+                        .join(", ")}) are also highlighted.
+                    </p>
+                  </div>
+                );
+              })()
+            )}
+
+            </>
+          ) : (
+            <div className="text-sm text-gray-600">(build boundaries)</div>
+          )}
+        </Section>
+
+        {/* RIGHT: SVG */}
+          {faces.length ? (
+            <div className="w-full">
+              <TriangulationView
+                space={space}
+                m={m}
+                n={n}
+                faces={faces as number[][]}
+                selectedSimplex={selectedSimplex}
+                rp2Decomp={rp2Decomp}
+              />
+            </div>
+          ) : (
+            <div className="text-sm text-gray-600">
+              (triangulate first to see the complex)
+            </div>
+          )}
+      </div>
+    ) : (
+      /* the non-pinned version, below */
+      <Section
+        title="d2 : C2 → C1 (raw)"
+        withSVGToggle
+        isWithSVG={d2WithSVG}
+        onToggleWithSVG={setD2WithSVG}
+      >
+        {d2?.M && d2.M.length ? (
+          <>
+           <MatrixView
+              M={MshowD2}
+              rows={d2.rows}
+              cols={colsShowD2}
+              caption="Rows: edges, Cols: triangles"
+              activeCol={activeD2Col}
+              onColClick={(col, j) => {
+                // toggle: if you click the same column again, turn it off
+                setActiveD2Col((prev) => {
+                  const next = prev === j ? null : j;
+                  setSelectedSimplex(next === null ? null : col); // update SVG
+                  return next;
+                });
+              }}
+            />
+            <div className="mt-2 text-xs text-gray-700 flex flex-wrap items-center gap-2">
+              <span>
+                Showing {visibleD2} / {totalColsD2} columns
+              </span>
+              <button
+                className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50"
+                onClick={() => {
+                  if (!d2) return;
+                  setD2VisibleCols((v) => {
+                    const next = Math.min(v + 1, totalColsD2);
+                    const colIndex = next - 1;
+                    if (colIndex >= 0 && colIndex < d2.cols.length) {
+                      const tri = d2.cols[colIndex];      // e.g. [0,3,4]
+                      setActiveD2Col(colIndex);          // highlight this column in matrix
+                      setSelectedSimplex(tri);           // highlight triangle on SVG
+                    }
+                    return next;
+                  });
+                }}
+                disabled={visibleD2 >= totalColsD2}
+              >
+                Next column of ∂₂
+              </button>
+              <button
+                className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50"
+                onClick={() => setD2VisibleCols(0)}
+                disabled={visibleD2 === 0}
+              >
+                Reset (hide all)
+              </button>
+              <button
+                className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50"
+                onClick={() => setD2VisibleCols(totalColsD2)}
+                disabled={visibleD2 === totalColsD2}
+              >
+                Show all
+              </button>
+              <button
+              className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50"
+              onClick={() =>
+                setD2ShowHelp((open) => {
+                  const next = !open;
+                  // When opening Help, select the FIRST column as the example
+                  if (!open && d2 && d2.cols.length > 0) {
+                    setActiveD2Col(0);
+                    setSelectedSimplex(d2.cols[0]); // highlight that triangle on the SVG
+                  }
+                  return next;
+                })
+              }
+            >
+              Help
+            </button>
+            </div>
+
+            {d2ShowHelp && d2 && d2.cols.length > 0 && (
+            (() => {
+              const j = 0; // first column as the example
+              const tri = d2.cols[j]; // e.g. [0,3,4]
+
+              const terms = d2.rows
+                .map((edge, i) => {
+                  const raw = d2.M[i][j];
+                  const coeff = raw == null ? 0 : Number(raw);
+                  return { edge, coeff };
+                })
+                .filter((t) => !Number.isNaN(t.coeff) && t.coeff !== 0);
+
+              return (
+                <div className="mt-2 text-[11px] text-gray-700 leading-snug">
+                  <div className="font-semibold mb-1">How is ∂₂ computed?</div>
+
+                  <p>
+                    For an oriented triangle [v₀, v₁, v₂], the boundary is the alternating sum
+                    of its oriented edges:
+                  </p>
+                  <pre className="bg-gray-50 rounded px-2 py-1 mt-1 whitespace-pre-wrap">
+          {`∂₂([v₀, v₁, v₂]) = [v₁, v₂] − [v₀, v₂] + [v₀, v₁].`}
+                  </pre>
+
+                  {/* Example built from the FIRST column of the matrix */}
+                  <div className="mt-2 font-semibold">
+                    Example (first column of ∂₂)
+                  </div>
+                  <p className="mt-1">
+                    In the first column, the triangle is [{tri.join(", ")}]. Its boundary,
+                    read from the matrix, is:
+                  </p>
+                  <pre className="bg-gray-50 rounded px-2 py-1 mt-1 whitespace-pre-wrap">
+          {`∂₂([${tri.join(", ")}]) = ${
+            terms.length === 0
+              ? "0"
+              : terms
+                  .map((t, idx) => {
+                    const s = t.coeff === 1 ? "" : t.coeff === -1 ? "−" : `${t.coeff}·`;
+                    const plus = idx === 0 ? "" : " + ";
+                    return `${plus}${s}[${t.edge.join(", ")}]`;
+                  })
+                  .join("")
+          }`}
+                  </pre>
+
+                  <p className="mt-1">
+                    This corresponds exactly to the first column of the matrix:
+                  </p>
+                  <ul className="list-disc ml-4 mt-1">
+                    {terms.map((t, k) => (
+                      <li key={k}>
+                        row [{t.edge.join(", ")}] has value {t.coeff}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-1">
+                    In the table above, that column is highlighted in blue, and the rows
+                    with non-zero entries ({terms
+                      .map((t) => `(${t.edge.join(", ")})`)
+                      .join(", ")}) are also highlighted.
+                  </p>
+                </div>
+              );
+            })()
+          )}
+
+          </>
+        ) : (
+          <div className="text-sm text-gray-600">(build boundaries)</div>
+        )}
+      </Section>
+    )}
+
+
+      {/* d1 - Can be pinned with SVG */}
+      {d1WithSVG ? (
+      <div className="grid md:grid-cols-2 gap-4 mb-4 items-stretch">
+        {/* LEFT: d1 matrix */}
+        <Section
+          title="d1 : C1 → C0 (raw)"
+          withSVGToggle
+          isWithSVG={d1WithSVG}
+          onToggleWithSVG={setD1WithSVG}
+        >
+          {d1?.M && d1.M.length ? (
+            <>
+              <MatrixView
+                M={MshowD1}
+                rows={d1.rows}
+                cols={colsShowD1}
+                caption="Rows: vertices, Cols: edges"
+                onColClick={(col) => setSelectedSimplex(col)}  // click edge → highlight
+              />
+              <div className="mt-2 text-xs text-gray-700 flex flex-wrap items-center gap-2">
+                <span>
+                  Showing {visibleD1} / {totalColsD1} columns
+                </span>
+                <button
+                  className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50"
+                  onClick={() =>
+                    setD1VisibleCols((v) => Math.min(v + 1, totalColsD1))
+                  }
+                  disabled={visibleD1 >= totalColsD1}
+                >
+                  Next column of ∂₁
+                </button>
+                <button
+                  className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50"
+                  onClick={() => setD1VisibleCols(0)}
+                  disabled={visibleD1 === 0}
+                >
+                  Reset (hide all)
+                </button>
+                <button
+                  className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50"
+                  onClick={() => setD1VisibleCols(totalColsD1)}
+                  disabled={visibleD1 === totalColsD1}
+                >
+                  Show all
+                </button>
+                {/* Help button */}
+                <button
+                  className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50"
+                  onClick={() => setD1ShowHelp((h) => !h)}
+                >
+                  Help
+                </button>
+              </div>
+
+              {d1ShowHelp && (
+                <div className="mt-2 text-[11px] text-gray-700 leading-snug">
+                  <div className="font-semibold mb-1">How is ∂₁ computed?</div>
+                  <p>For an oriented edge [v₀, v₁], the boundary is:</p>
+                  <pre className="bg-gray-50 rounded px-2 py-1 mt-1 whitespace-pre-wrap">
+    {`∂₁([v₀, v₁]) = [v₁] − [v₀].`}
+                  </pre>
+                  <p className="mt-1">
+                    In the matrix, each column is an edge. The entry in row [v] and column
+                    [v₀, v₁] is:
+                  </p>
+                  <pre className="bg-gray-50 rounded px-2 py-1 mt-1 whitespace-pre-wrap">
+    {`+1 if v = v₁
+    −1 if v = v₀
+    0 otherwise.`}
+                  </pre>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="text-sm text-gray-600">(build boundaries)</div>
+          )}
+        </Section>
+
+        {/* RIGHT: SVG */}
+          {faces.length ? (
+            <div className="w-full">
+              <TriangulationView
+                space={space}
+                m={m}
+                n={n}
+                faces={faces as number[][]}
+                selectedSimplex={selectedSimplex}
+                rp2Decomp={rp2Decomp}
+              />
+            </div>
+          ) : (
+            <div className="text-sm text-gray-600">
+              (triangulate first to see the complex)
+            </div>
+          )}
+      </div>
+    ) : (
+      <Section
+        title="d1 : C1 → C0 (raw)"
+        withSVGToggle
+        isWithSVG={d1WithSVG}
+        onToggleWithSVG={setD1WithSVG}
+      >
+        {d1?.M && d1.M.length ? (
+          <>
+            <MatrixView
+              M={MshowD1}
+              rows={d1.rows}
+              cols={colsShowD1}
+              caption="Rows: vertices, Cols: edges"
+              onColClick={(col) => setSelectedSimplex(col)}
+            />
+            <div className="mt-2 text-xs text-gray-700 flex flex-wrap items-center gap-2">
+              <span>
+                Showing {visibleD1} / {totalColsD1} columns
+              </span>
+              <button
+                className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50"
+                onClick={() =>
+                  setD1VisibleCols((v) => Math.min(v + 1, totalColsD1))
+                }
+                disabled={visibleD1 >= totalColsD1}
+              >
+                Next column of ∂₁
+              </button>
+              <button
+                className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50"
+                onClick={() => setD1VisibleCols(0)}
+                disabled={visibleD1 === 0}
+              >
+                Reset (hide all)
+              </button>
+              <button
+                className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50"
+                onClick={() => setD1VisibleCols(totalColsD1)}
+                disabled={visibleD1 === totalColsD1}
+              >
+                Show all
+              </button>
+              <button
+                className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50"
+                onClick={() => setD1ShowHelp((h) => !h)}
+              >
+                Help
+              </button>
+            </div>
+
+            {d1ShowHelp && (
+              <div className="mt-2 text-[11px] text-gray-700 leading-snug">
+                <div className="font-semibold mb-1">How is ∂₁ computed?</div>
+                <p>For an oriented edge [v₀, v₁], the boundary is:</p>
+                <pre className="bg-gray-50 rounded px-2 py-1 mt-1 whitespace-pre-wrap">
+    {`∂₁([v₀, v₁]) = [v₁] − [v₀].`}
+                </pre>
+                <p className="mt-1">
+                  Matrix entries are +1, −1 or 0 depending on whether v is the head,
+                  the tail, or not in the edge.
+                </p>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="text-sm text-gray-600">(build boundaries)</div>
+        )}
+      </Section>
+    )}
+
+
+      {/* RREF(d2) and RREF(d1) */}
+      <Section title="RREF(d2) over Q">
+        {rref2?.R && rref2.R.length ? (
+          <MatrixViewFrac
+            M={rref2.R}
+            rows={d2!.rows}
+            cols={d2!.cols}
+            caption={pivotsCaption2}
+          />
+        ) : (
+          <div className="text-sm text-gray-600">(click "Reduce (RREF)")</div>
+        )}
+      </Section>
+
+      <Section title="RREF(d1) over Q">
+        {rref1?.R && rref1.R.length ? (
+          <MatrixViewFrac
+            M={rref1.R}
+            rows={d1!.rows}
+            cols={d1!.cols}
+          />
+        ) : (
+          <div className="text-sm text-gray-600">(click "Reduce (RREF)")</div>
+        )}
+      </Section>
+
+      <Section title="Smith Normal Form of d₂ (over ℤ)">
+        {snfDiag ? (
+          <div className="text-sm">
+            diag(d₂) = [{snfDiag.join(", ")}]
+          </div>
+        ) : (
+          <div className="text-sm text-gray-600">
+            (click "Smith Normal Form (Z)")
           </div>
         )}
       </Section>
 
-      
+      {/* HOMOLOGY SUMMARY */}
+      <Section title="Homology (Z & R)">
+        {summary.length === 0 ? (
+          <div className="text-sm text-gray-600">(compute homology)</div>
+        ) : (
+          <div className="text-sm">
+            {summary.map(
+              ({ k, n_k, rank_dk, rank_dk1, beta, torsion }) => (
+                <div key={k} className="mb-1">
+                  <div className="font-medium">{`H_${k}:`}</div>
+                  <div>{`n_k=${n_k}, rank(d_${k})=${rank_dk}, rank(d_${
+                    k + 1
+                  })=${rank_dk1} => beta_${k}=${beta}`}</div>
+                  <div>
+                    {`Z: Z^{beta_${k}} + `}
+                    {torsion.length
+                      ? torsion.map((t) => `Z/${t}`).join(" + ")
+                      : "0 (no torsion)"}
+                  </div>
+                  <div>{`R: dim = beta_${k}`}</div>
+                </div>
+              )
+            )}
+          </div>
+        )}
+      </Section>
     </div>
-  );
+  </div>
+);
 }
