@@ -763,31 +763,126 @@ function MatrixView({
     </div>
   );
 }
+type MatrixViewFracProps = {
+  M: Frac[][];
+  rows?: number[][];
+  cols?: number[][];
+  caption?: string;
+  activeCol?: number | null;
+  onColClick?: (col: number[], j: number) => void;
+  blueRows?: number[];  // rows we “sum from”
+  redRows?: number[];   // rows we modify
+  pivotCells?: { row: number; col: number }[]; // cells to highlight (pivots)
+};
 
-function MatrixViewFrac({M, rows=[], cols=[], caption}:{M:Frac[][]; rows:number[][]; cols:number[][]; caption?:string}){
-  if (!M || !M.length) return <div className="text-sm text-gray-600">(empty)</div>;
+function MatrixViewFrac({
+  M,
+  rows = [],
+  cols = [],
+  caption,
+  activeCol = null,
+  onColClick,
+  blueRows = [],
+  redRows = [],
+  pivotCells = [],
+}: MatrixViewFracProps) {
+
+  if (!M || !M.length) {
+    return <div className="text-sm text-gray-600">(empty)</div>;
+  }
+
   return (
     <div className="overflow-auto">
-      {caption && <div className="text-sm text-gray-700 mb-1">{caption}</div>}
-      <table className="text-xs border-collapse">
+      {caption && (
+        <div className="text-sm text-gray-700 mb-1">
+          {caption}
+        </div>
+      )}
+
+      <div className="flex justify-center">
+        <table className="text-xs border-collapse">
         <thead>
           <tr>
-            <th className="px-1 py-0.5 text-left text-gray-500">Rows / Cols</th>
-            {cols.map((c, j)=>(<th key={j} className="px-1 py-0.5 border-b text-gray-700">{`(${c.join(',')})`}</th>))}
+            <th className="px-1 py-0.5 text-left text-gray-500">
+              Rows / Cols
+            </th>
+            {cols.map((c, j) => {
+              const isActiveCol = activeCol === j;
+              return (
+                <th
+                  key={j}
+                  className="px-1 py-0.5 border-b text-gray-700 cursor-pointer"
+                  style={isActiveCol ? { backgroundColor: "#bfdbfe", fontWeight: 600 } : {}}
+                  onClick={() => onColClick && onColClick(c, j)}
+                >
+                  ({c.join(",")})
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>
-          {rows.map((r,i)=>(
-            <tr key={i}>
-              <td className="px-1 py-0.5 pr-2 text-gray-700 border-r whitespace-nowrap">({r.join(',')})</td>
-              {M[i].map((x,j)=>(<td key={j} className="px-1 py-0.5 text-center">{x.toString()}</td>))}
-            </tr>
-          ))}
+          {rows.map((r, i) => {
+            const isBlue = blueRows.includes(i);  // these will be GREEN
+            const isRed = redRows.includes(i);
+
+            const baseRowBg = isBlue
+              ? "#dcfce7" // light green
+              : isRed
+              ? "#fee2e2" // light red
+              : "transparent";
+
+            return (
+              <tr key={i}>
+                {/* row label */}
+                <td
+                  className="px-1 py-0.5 pr-2 text-gray-700 border-r whitespace-nowrap"
+                  style={{ backgroundColor: baseRowBg }}
+                >
+                  ({r.join(",")})
+                </td>
+
+            {/* data cells */}
+            {M[i].map((x, j) => {
+              const isActiveCol = activeCol === j;
+              const isPivotCell = pivotCells.some(
+                (p) => p.row === i && p.col === j
+              );
+
+              let cellBg = baseRowBg;
+
+              if (isActiveCol) {
+                // during the process: highlight pivot column / row
+                cellBg = isBlue ? "#bbf7d0" : "#bfdbfe";
+              }
+              if (isPivotCell) {
+                // final view: pivot itself gets blue background
+                cellBg = "#bfdbfe";
+              }
+
+              return (
+                <td
+                  key={j}
+                  className="px-1 py-0.5 text-center"
+                  style={{ backgroundColor: cellBg }}
+                >
+                  {x.toString()}
+                </td>
+              );
+            })}
+
+              </tr>
+            );
+          })}
         </tbody>
-      </table>
-      <div className="text-[11px] text-gray-500 mt-1">shape = ({M.length}, {M[0]?.length||0})</div>
-    </div>
-  );
+              </table>
+      </div>
+
+      <div className="text-[11px] text-gray-500 mt-1">
+        shape = ({M.length}, {M[0].length})
+      </div>
+  </div>
+);
 }
 
 
@@ -890,6 +985,7 @@ function ChainsView({
   );
 }
 
+
 export default function App() {
   // ----------------- STATE -----------------
   const [space, setSpace] = useState<"torus" | "klein" | "rp2">("torus");
@@ -906,6 +1002,56 @@ export default function App() {
   
   const [activeD2Col, setActiveD2Col] = useState<number | null>(null);
   const [activeD1Col, setActiveD1Col] = useState<number | null>(null);
+
+  const [d2RrefMatrix, setD2RrefMatrix] = useState<Frac[][] | null>(null);
+  const [d2PivotRow, setD2PivotRow] = useState<number>(0);
+  const [d2PivotCol, setD2PivotCol] = useState<number>(0);
+  const [d2RrefDone, setD2RrefDone] = useState<boolean>(false);
+
+  const [d2StepMatrix, setD2StepMatrix] = useState<Frac[][] | null>(null);
+  const [d2StepRow, setD2StepRow] = useState(0);
+  const [d2StepCol, setD2StepCol] = useState(0);
+  const [d2StepDone, setD2StepDone] = useState(false);
+
+  
+
+ type D2RowOp =
+  | { kind: "swap"; r1: number; r2: number }
+  | { kind: "scale"; row: number; factor: Frac }
+  | { kind: "elim"; pivot: number; target: number; factor: Frac };
+
+  type D2RrefSnapshot = {
+    A: Frac[][];
+    pivotRow: number;
+    pivotCol: number;
+    elimIndex: number;
+    done: boolean;
+    pendingOp: D2RowOp | null;
+    blueRows: number[];
+    redRows: number[];
+    opText: string | null;
+  };
+
+  
+
+  const [d2ElimIndex, setD2ElimIndex] = useState(0);
+  const [d2Done, setD2Done] = useState(false);
+
+  const [d2PendingOp, setD2PendingOp] = useState<D2RowOp | null>(null);
+  const [d2BlueRows, setD2BlueRows] = useState<number[]>([]);
+  const [d2RedRows, setD2RedRows] = useState<number[]>([]);
+  const [d2OpText, setD2OpText] = useState<string | null>(null);
+
+  // NEW: history of states, for “back one step”
+  const [d2History, setD2History] = useState<D2RrefSnapshot[]>([]);
+
+  // fine-grained step info for d2 RREF
+  const [d2StepStage, setD2StepStage] = useState<
+    "searchPivot" | "scale" | "eliminate" | "done"
+  >("searchPivot");
+  const [d2ElimRow, setD2ElimRow] = useState(0);
+  const [d2LastOp, setD2LastOp] = useState<string | null>(null);
+  const [d2ActiveRows, setD2ActiveRows] = useState<number[]>([]);
 
   const [d2, setD2] = useState<{
     M: bigint[][];
@@ -939,6 +1085,10 @@ export default function App() {
     }[]
   >([]);
   const [tests, setTests] = useState<string[]>([]);
+
+  const [d2PivotCellsFinal, setD2PivotCellsFinal] = useState<
+    { row: number; col: number }[]
+  >([]);
 
   const [selectedSimplex, setSelectedSimplex] = useState<number[] | null>(null);
   const [rp2Decomp, setRp2Decomp] = useState(false);
@@ -1031,11 +1181,14 @@ export default function App() {
     const R1 = rrefOverQ(d1.M);
     setRref2(R2);
     setRref1(R1);
+    setD2PivotCellsFinal(R2.pivots);  // <-- NEW
+
     const pivotsLabel = `Pivots d2: ${R2.pivots
       .map((p) => `(r${p.row},c${p.col})`)
       .join(", ")}`;
     log(`Computed RREF over Q for d2 and d1. ${pivotsLabel}`);
   };
+
 
   const go6_snf = () => {
     if (!d2) {
@@ -1143,6 +1296,486 @@ export default function App() {
     d1 && d1.cols
       ? d1.cols.slice(0, visibleD1)
       : [];
+
+function startD2RrefStepper() {
+  // We need the RREF of d2 already computed
+  if (!rref2) return;
+
+  // Deep copy rref2.R (Frac[][])
+  const copied = rref2.R.map(row =>
+    row.map(fr => new Frac(fr.num, fr.den))
+  );
+
+  setD2RrefMatrix(copied);
+  setD2PivotRow(0);
+  setD2PivotCol(0);
+  setD2RrefDone(false);
+}
+
+
+function nextD2PivotStep() {
+  if (!d2RrefMatrix || d2RrefDone) return;
+
+  const rows = d2RrefMatrix.length;
+  const cols = rows > 0 ? d2RrefMatrix[0].length : 0;
+
+  let r = d2PivotRow;
+  let c = d2PivotCol;
+
+  // Find next pivot column & row
+  while (c < cols) {
+    let pivotRow = -1;
+
+    for (let i = r; i < rows; i++) {
+      const val = d2RrefMatrix[i][c];
+      if (!val.isZero()) {
+        pivotRow = i;
+        break;
+      }
+    }
+
+    if (pivotRow === -1) {
+      // no pivot in this column → move to next column
+      c++;
+      continue;
+    }
+
+    // We found a pivot at (pivotRow, c)
+    const M = d2RrefMatrix.map(row => row.slice()); // copy
+
+    // 1. Swap rows pivotRow and r (current pivot row), if needed
+    if (pivotRow !== r) {
+      const tmp = M[pivotRow];
+      M[pivotRow] = M[r];
+      M[r] = tmp;
+    }
+
+    // 2. Normalize pivot row so pivot = 1
+    const pivotVal = M[r][c];
+    for (let j = 0; j < cols; j++) {
+      M[r][j] = M[r][j].div(pivotVal);
+    }
+
+    // 3. Eliminate other rows in column c
+    for (let i = 0; i < rows; i++) {
+      if (i === r) continue;
+      const factor = M[i][c];
+      if (factor.isZero()) continue;
+      for (let j = 0; j < cols; j++) {
+        M[i][j] = M[i][j].sub(factor.mul(M[r][j]));
+      }
+    }
+
+    // Update state after this single pivot step
+    setD2RrefMatrix(M);
+    setD2PivotRow(r + 1);
+    setD2PivotCol(c + 1);
+
+    // If we used the last possible row or column, we may be done
+    if (r + 1 >= rows || c + 1 >= cols) {
+      // We might still have to scan for more pivots later; you can
+      // either mark done here or let the while loop continue in next clicks.
+      // Let's only mark done when no more pivots are found:
+      // (we'll handle that below)
+    }
+
+    return; // we stop after ONE pivot step
+  }
+
+  // If we exit the while(c < cols) loop, there were no more pivots
+  setD2RrefDone(true);
+}
+
+  function startD2StepRref() {
+    if (!d2) return;
+
+    const A: Frac[][] = d2.M.map((row) =>
+      row.map((x) => new Frac(x, 1n))
+    );
+
+    setD2StepMatrix(A);
+    setD2PivotRow(0);
+    setD2PivotCol(0);
+    setD2ElimIndex(0);
+    setD2Done(false);
+    setD2PendingOp(null);
+    setD2BlueRows([]);
+    setD2RedRows([]);
+    setD2OpText(
+      "Initialized step-by-step RREF(∂₂). Click 'Next pivot step' to see the first operation."
+    );
+    setD2History([]);
+  }
+
+
+
+  function findNextD2Op(
+  A: Frac[][],
+  startRow: number,
+  startCol: number,
+  elimIndex: number
+): { op: D2RowOp; nextRow: number; nextCol: number; nextElim: number } | null {
+  const m = A.length;
+  const n = m ? A[0].length : 0;
+
+  let r = startRow;
+  let c = startCol;
+  let elim = elimIndex;
+
+  while (r < m && c < n) {
+    // 1. find pivot in column c from row r down
+    let p = -1;
+    for (let i = r; i < m; i++) {
+      if (!A[i][c].isZero()) {
+        p = i;
+        break;
+      }
+    }
+
+    if (p === -1) {
+      // no pivot in this column → move to next column
+      c++;
+      elim = 0;
+      continue;
+    }
+
+    // --- we have a pivot in row p, col c ---
+
+    // case 1: need to swap pivot into row r
+    if (p !== r) {
+      const op: D2RowOp = { kind: "swap", r1: r, r2: p };
+      return { op, nextRow: r, nextCol: c, nextElim: 0 };
+    }
+
+    const pivot = A[r][c];
+
+    // case 2: pivot exists but not equal to 1 → scale row r
+    if (!(pivot.num === 1n && pivot.den === 1n)) {
+      const factor = Frac.one().div(pivot); // multiply row r by this
+      const op: D2RowOp = { kind: "scale", row: r, factor };
+      return { op, nextRow: r, nextCol: c, nextElim: 0 };
+    }
+
+    // case 3: eliminate other entries in column c
+    for (let i = elim; i < m; i++) {
+      if (i === r) continue;
+      if (A[i][c].isZero()) continue;
+      const factor = A[i][c]; // we will do R_i ← R_i − factor·R_r
+      const op: D2RowOp = { kind: "elim", pivot: r, target: i, factor };
+      return { op, nextRow: r, nextCol: c, nextElim: i + 1 };
+    }
+
+    // no more rows to eliminate in this column → go to next pivot
+    r++;
+    c++;
+    elim = 0;
+  }
+
+  // no more pivots/operations
+  return null;
+}
+
+  function prevD2StepRref() {
+    if (d2History.length === 0) return;
+
+    const last = d2History[d2History.length - 1];
+
+    // restore matrix and metadata
+    setD2StepMatrix(
+      last.A.map((row) => row.map((fr) => new Frac(fr.num, fr.den)))
+    );
+    setD2PivotRow(last.pivotRow);
+    setD2PivotCol(last.pivotCol);
+    setD2ElimIndex(last.elimIndex);
+    setD2Done(last.done);
+    setD2PendingOp(last.pendingOp);
+    setD2BlueRows(last.blueRows);
+    setD2RedRows(last.redRows);
+    setD2OpText(last.opText);
+
+    // drop the last history entry
+    setD2History(d2History.slice(0, -1));
+  }
+
+  function finishD2StepRref() {
+    if (!d2StepMatrix || d2Done) return;
+
+    let A = d2StepMatrix.map((row) =>
+      row.map((fr) => new Frac(fr.num, fr.den))
+    );
+
+    let row = d2PivotRow;
+    let col = d2PivotCol;
+    let elim = d2ElimIndex;
+
+    let lastText: string | null = null;
+    let lastBlue: number[] = [];
+    let lastRed: number[] = [];
+
+    // If there is a pending preview op, apply it first
+    if (d2PendingOp) {
+      const op = d2PendingOp;
+      switch (op.kind) {
+        case "swap": {
+          const { r1, r2 } = op;
+          const tmp = A[r1];
+          A[r1] = A[r2];
+          A[r2] = tmp;
+          lastText = `Apply: swap R${r1 + 1} ↔ R${r2 + 1}.`;
+          lastBlue = [r1];
+          lastRed = [r2];
+          break;
+        }
+        case "scale": {
+          const { row: rr, factor } = op;
+          for (let j = 0; j < A[0].length; j++) {
+            A[rr][j] = A[rr][j].mul(factor);
+          }
+          lastText = `Apply: R${rr + 1} ← (${factor.toString()}) · R${rr + 1}.`;
+          lastBlue = [rr];
+          lastRed = [];
+          break;
+        }
+        case "elim": {
+          const { pivot, target, factor } = op;
+          for (let j = 0; j < A[0].length; j++) {
+            A[target][j] = A[target][j].sub(factor.mul(A[pivot][j]));
+          }
+          lastText = `Apply: R${target + 1} ← R${target + 1} − (${factor.toString()}) · R${pivot + 1}.`;
+          lastBlue = [pivot];
+          lastRed = [target];
+          break;
+        }
+      }
+    }
+
+    // Now apply all remaining operations
+    while (true) {
+      const info = findNextD2Op(A, row, col, elim);
+      if (!info) break;
+
+      const { op, nextRow, nextCol, nextElim } = info;
+
+      switch (op.kind) {
+        case "swap": {
+          const { r1, r2 } = op;
+          const tmp = A[r1];
+          A[r1] = A[r2];
+          A[r2] = tmp;
+          lastText = `Apply: swap R${r1 + 1} ↔ R${r2 + 1}.`;
+          lastBlue = [r1];
+          lastRed = [r2];
+          break;
+        }
+        case "scale": {
+          const { row: rr, factor } = op;
+          for (let j = 0; j < A[0].length; j++) {
+            A[rr][j] = A[rr][j].mul(factor);
+          }
+          lastText = `Apply: R${rr + 1} ← (${factor.toString()}) · R${rr + 1}.`;
+          lastBlue = [rr];
+          lastRed = [];
+          break;
+        }
+        case "elim": {
+          const { pivot, target, factor } = op;
+          for (let j = 0; j < A[0].length; j++) {
+            A[target][j] = A[target][j].sub(factor.mul(A[pivot][j]));
+          }
+          lastText = `Apply: R${target + 1} ← R${target + 1} − (${factor.toString()}) · R${pivot + 1}.`;
+          lastBlue = [pivot];
+          lastRed = [target];
+          break;
+        }
+      }
+
+      row = nextRow;
+      col = nextCol;
+      elim = nextElim;
+    }
+
+    if (lastBlue.length === 0 && lastRed.length === 0) {
+      lastBlue = d2BlueRows;
+      lastRed = d2RedRows;
+    }
+
+    const finalPivots = computePivotsFromFracMatrix(A);
+    setD2PivotCellsFinal(finalPivots);
+
+    setD2StepMatrix(A);
+    setD2PendingOp(null);
+    setD2PivotRow(row);
+    setD2PivotCol(col);
+    setD2ElimIndex(elim);
+    // mark process as finished and clear any row highlights
+    setD2Done(true);
+    setD2BlueRows([]);
+    setD2RedRows([]);
+    setD2OpText(lastText ?? "All remaining pivot steps applied.");
+  }
+
+
+  function nextD2StepRref() {
+    if (!d2StepMatrix || d2Done) return;
+
+    // Save current state so we can go back one step later
+    setD2History((hist) => [
+      ...hist,
+      {
+        A: d2StepMatrix.map((row) =>
+          row.map((fr) => new Frac(fr.num, fr.den))
+        ),
+        pivotRow: d2PivotRow,
+        pivotCol: d2PivotCol,
+        elimIndex: d2ElimIndex,
+        done: d2Done,
+        pendingOp: d2PendingOp,
+        blueRows: d2BlueRows,
+        redRows: d2RedRows,
+        opText: d2OpText,
+      },
+    ]);
+
+    // ---------- second click: APPLY the pending op ----------
+    // ---------- second click: APPLY the pending op ----------
+    if (d2PendingOp) {
+      const A: Frac[][] = d2StepMatrix.map((row) =>
+        row.map((fr) => new Frac(fr.num, fr.den))
+      );
+
+      const op = d2PendingOp;
+
+      // aplica numericamente a operação
+      switch (op.kind) {
+        case "swap": {
+          const { r1, r2 } = op;
+          const tmp = A[r1];
+          A[r1] = A[r2];
+          A[r2] = tmp;
+          break;
+        }
+        case "scale": {
+          const { row, factor } = op;
+          for (let j = 0; j < A[0].length; j++) {
+            A[row][j] = A[row][j].mul(factor);
+          }
+          break;
+        }
+        case "elim": {
+          const { pivot, target, factor } = op;
+          for (let j = 0; j < A[0].length; j++) {
+            A[target][j] = A[target][j].sub(factor.mul(A[pivot][j]));
+          }
+          break;
+        }
+      }
+
+      setD2StepMatrix(A);
+      setD2PendingOp(null);
+      // texto no formato Pivot / Operação / Linhas / Resumo
+      setD2OpText(formatD2Op(op, d2PivotRow, d2PivotCol));
+      return;
+    }
+
+
+    // ---------- first click: PREVIEW the next op ----------
+    const info = findNextD2Op(
+      d2StepMatrix,
+      d2PivotRow,
+      d2PivotCol,
+      d2ElimIndex
+    );
+    if (!info) {
+      setD2Done(true);
+      setD2OpText("No more operations: matrix is in RREF.");
+      setD2BlueRows([]);
+      setD2RedRows([]);
+      return;
+    }
+
+    const { op, nextRow, nextCol, nextElim } = info;
+
+    setD2PendingOp(op);
+    setD2PivotRow(nextRow);
+    setD2PivotCol(nextCol);
+    setD2ElimIndex(nextElim);
+
+    // cores (pré-visualização)
+    if (op.kind === "swap") {
+      setD2BlueRows([op.r1]);
+      setD2RedRows([op.r2]);
+    } else if (op.kind === "scale") {
+      setD2BlueRows([op.row]);
+      setD2RedRows([]);
+    } else {
+      setD2BlueRows([op.pivot]);
+      setD2RedRows([op.target]);
+    }
+
+    // texto no formato Pivot / Operação / Linhas / Resumo
+    setD2OpText(formatD2Op(op, nextRow, nextCol))};
+
+
+function formatD2Op(op: D2RowOp, pivotRow: number, pivotCol: number): string {
+    const pivotLine = `Pivot: (${pivotRow + 1}, ${pivotCol + 1})`;
+
+  let operacao = "";
+  let linhas = "";
+  let resumo = "";
+
+  switch (op.kind) {
+    case "swap": {
+      const { r1, r2 } = op;
+      operacao = "Troca de linhas";
+      linhas = `Linhas: R${r1 + 1} / R${r2 + 1}`;
+      resumo = `Resumo: R${r1 + 1} ↔ R${r2 + 1}`;
+      break;
+    }
+    case "scale": {
+      const { row, factor } = op;
+      operacao = "Multiplicação";
+      linhas = `Linhas: R${row + 1}`;
+      resumo = `Resumo: R${row + 1} ← ${factor.toString()} · R${row + 1}`;
+      break;
+    }
+    case "elim": {
+      const { pivot, target, factor } = op;
+      operacao = "Soma (eliminação)";
+      linhas = `Linhas: R${target + 1} / R${pivot + 1}`;
+      resumo = `Resumo: R${target + 1} ← R${target + 1} − (${factor.toString()}) · R${pivot + 1}`;
+      break;
+    }
+  }
+
+  return [
+    pivotLine,
+    `Operação: ${operacao}`,
+    linhas,
+    resumo,
+  ].join("\n");
+}
+
+function computePivotsFromFracMatrix(A: Frac[][]): { row: number; col: number }[] {
+  const m = A.length;
+  const n = m ? A[0].length : 0;
+  const pivots: { row: number; col: number }[] = [];
+
+  let r = 0;
+  for (let c = 0; c < n && r < m; c++) {
+    let pivotRow = -1;
+    for (let i = r; i < m; i++) {
+      if (!A[i][c].isZero()) {
+        pivotRow = i;
+        break;
+      }
+    }
+    if (pivotRow === -1) continue;
+    pivots.push({ row: pivotRow, col: c });
+    r = pivotRow + 1;
+  }
+
+  return pivots;
+}
 
   // ----------------- JSX -----------------
 return (
@@ -1719,7 +2352,15 @@ return (
                 rows={d1.rows}
                 cols={colsShowD1}
                 caption="Rows: vertices, Cols: edges"
-                onColClick={(col) => setSelectedSimplex(col)}  // click edge → highlight
+                activeCol={activeD1Col}
+                onColClick={(col, j) => {
+                  // same toggle behavior as d₂
+                  setActiveD1Col((prev) => {
+                    const next = prev === j ? null : j;
+                    setSelectedSimplex(next === null ? null : col);
+                    return next;
+                  });
+                }}
               />
               <div className="mt-2 text-xs text-gray-700 flex flex-wrap items-center gap-2">
                 <span>
@@ -1727,13 +2368,24 @@ return (
                 </span>
                 <button
                   className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50"
-                  onClick={() =>
-                    setD1VisibleCols((v) => Math.min(v + 1, totalColsD1))
-                  }
+                  onClick={() => {
+                    if (!d1) return;
+                    setD1VisibleCols((v) => {
+                      const next = Math.min(v + 1, totalColsD1);
+                      const colIndex = next - 1;
+                      if (colIndex >= 0 && colIndex < d1.cols.length) {
+                        const edge = d1.cols[colIndex];   // e.g. [0, 3]
+                        setActiveD1Col(colIndex);         // highlight this column in matrix
+                        setSelectedSimplex(edge);         // highlight the edge on the SVG
+                      }
+                      return next;
+                    });
+                  }}
                   disabled={visibleD1 >= totalColsD1}
                 >
                   Next column of ∂₁
                 </button>
+
                 <button
                   className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50"
                   onClick={() => setD1VisibleCols(0)}
@@ -1750,31 +2402,92 @@ return (
                 </button>
                 {/* Help button */}
                 <button
-                  className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50"
-                  onClick={() => setD1ShowHelp((h) => !h)}
-                >
-                  Help
-                </button>
+                className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50"
+                onClick={() =>
+                  setD1ShowHelp((open) => {
+                    const next = !open;
+                    // when opening Help, select the FIRST column as example (like d₂)
+                    if (!open && d1 && d1.cols.length > 0) {
+                      setActiveD1Col(0);
+                      setSelectedSimplex(d1.cols[0]); // highlight that edge on the SVG
+                    }
+                    return next;
+                  })
+                }
+              >
+                Help
+              </button>
               </div>
 
-              {d1ShowHelp && (
-                <div className="mt-2 text-[11px] text-gray-700 leading-snug">
-                  <div className="font-semibold mb-1">How is ∂₁ computed?</div>
-                  <p>For an oriented edge [v₀, v₁], the boundary is:</p>
-                  <pre className="bg-gray-50 rounded px-2 py-1 mt-1 whitespace-pre-wrap">
-    {`∂₁([v₀, v₁]) = [v₁] − [v₀].`}
-                  </pre>
-                  <p className="mt-1">
-                    In the matrix, each column is an edge. The entry in row [v] and column
-                    [v₀, v₁] is:
-                  </p>
-                  <pre className="bg-gray-50 rounded px-2 py-1 mt-1 whitespace-pre-wrap">
-    {`+1 if v = v₁
-    −1 if v = v₀
-    0 otherwise.`}
-                  </pre>
-                </div>
-              )}
+              {d1ShowHelp && d1 && d1.cols.length > 0 && (() => {
+                const j = 0;                 // first column as example
+                const edge = d1.cols[j];     // e.g. [v0, v1]
+
+                const terms = d1.rows
+                  .map((vertex, i) => {
+                    const raw = d1.M[i][j];
+                    const coeff = raw == null ? 0 : Number(raw);
+                    return { vertex, coeff };
+                  })
+                  .filter((t) => !Number.isNaN(t.coeff) && t.coeff !== 0);
+
+                return (
+                  <div className="mt-2 text-[11px] text-gray-700 leading-snug">
+                    <div className="font-semibold mb-1">How is ∂₁ computed?</div>
+
+                    <p>
+                      For an oriented edge [v₀, v₁], the boundary is:
+                    </p>
+                    <pre className="bg-gray-50 rounded px-2 py-1 mt-1 whitespace-pre-wrap">
+              {`∂₁([v₀, v₁]) = [v₁] − [v₀].`}
+                    </pre>
+
+                    <div className="mt-2 font-semibold">
+                      Example (first column of ∂₁)
+                    </div>
+                    <p className="mt-1">
+                      In the first column, the edge is [{edge.join(", ")}]. Its boundary,
+                      read from the matrix, is:
+                    </p>
+                    <pre className="bg-gray-50 rounded px-2 py-1 mt-1 whitespace-pre-wrap">
+              {`∂₁([${edge.join(", ")}]) = ${
+                terms.length === 0
+                  ? "0"
+                  : terms
+                      .map((t, idx) => {
+                        const s =
+                          t.coeff === 1
+                            ? ""
+                            : t.coeff === -1
+                            ? "−"
+                            : `${t.coeff}·`;
+                        const plus = idx === 0 ? "" : " + ";
+                        return `${plus}${s}[${t.vertex.join(", ")}]`;
+                      })
+                      .join("")
+              }`}
+                    </pre>
+
+                    <p className="mt-1">
+                      This corresponds exactly to the first column of the matrix:
+                    </p>
+                    <ul className="list-disc ml-4 mt-1">
+                      {terms.map((t, k) => (
+                        <li key={k}>
+                          row [{t.vertex.join(", ")}] has value {t.coeff}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-1">
+                      In the table above, that column is highlighted in blue, and the rows
+                      with non-zero entries ({terms
+                        .map((t) => `(${t.vertex.join(", ")})`)
+                        .join(", ")}) are also highlighted.
+                    </p>
+                  </div>
+                );
+              })()}
+
             </>
           ) : (
             <div className="text-sm text-gray-600">(build boundaries)</div>
@@ -1813,7 +2526,14 @@ return (
               rows={d1.rows}
               cols={colsShowD1}
               caption="Rows: vertices, Cols: edges"
-              onColClick={(col) => setSelectedSimplex(col)}
+              activeCol={activeD1Col}
+              onColClick={(col, j) => {
+                setActiveD1Col((prev) => {
+                  const next = prev === j ? null : j;
+                  setSelectedSimplex(next === null ? null : col);
+                  return next;
+                });
+              }}
             />
             <div className="mt-2 text-xs text-gray-700 flex flex-wrap items-center gap-2">
               <span>
@@ -1821,13 +2541,24 @@ return (
               </span>
               <button
                 className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50"
-                onClick={() =>
-                  setD1VisibleCols((v) => Math.min(v + 1, totalColsD1))
-                }
+                onClick={() => {
+                  if (!d1) return;
+                  setD1VisibleCols((v) => {
+                    const next = Math.min(v + 1, totalColsD1);
+                    const colIndex = next - 1;
+                    if (colIndex >= 0 && colIndex < d1.cols.length) {
+                      const edge = d1.cols[colIndex];   // e.g. [0, 3]
+                      setActiveD1Col(colIndex);         // highlight this column in matrix
+                      setSelectedSimplex(edge);         // highlight the edge on the SVG
+                    }
+                    return next;
+                  });
+                }}
                 disabled={visibleD1 >= totalColsD1}
               >
                 Next column of ∂₁
               </button>
+
               <button
                 className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50"
                 onClick={() => setD1VisibleCols(0)}
@@ -1871,19 +2602,83 @@ return (
     )}
 
 
-      {/* RREF(d2) and RREF(d1) */}
-      <Section title="RREF(d2) over Q">
-        {rref2?.R && rref2.R.length ? (
+    <Section title="RREF(d2) over Q">
+      {/* Controls for step-by-step RREF(d2) */}
+      <div className="flex flex-wrap gap-2 mb-2">
+        <button
+          className="px-3 py-1 rounded bg-blue-600 text-white text-xs hover:bg-blue-700 disabled:opacity-50"
+          onClick={startD2StepRref}
+          disabled={!d2}
+        >
+          Start / Reset step-by-step
+        </button>
+
+        <button
+          className="px-3 py-1 rounded border text-xs hover:bg-gray-100 disabled:opacity-50"
+          onClick={prevD2StepRref}
+          disabled={!d2StepMatrix || d2History.length === 0}
+        >
+          Back one step
+        </button>
+
+        <button
+          className="px-3 py-1 rounded bg-emerald-600 text-white text-xs hover:bg-emerald-700 disabled:opacity-40"
+          onClick={nextD2StepRref}
+          disabled={!d2StepMatrix || d2Done}
+        >
+          Next pivot step
+        </button>
+
+        <button
+          className="px-3 py-1 rounded bg-gray-700 text-white text-xs hover:bg-gray-800 disabled:opacity-40"
+          onClick={finishD2StepRref}
+          disabled={!d2StepMatrix || d2Done}
+        >
+          Finish all steps
+        </button>
+      </div>
+
+      {/* BOX JUST BELOW THE BUTTONS */}
+      <div className="mb-3 p-3 rounded-xl border border-sky-400 bg-sky-50 shadow-sm">
+        <div className="text-xs font-semibold text-sky-950 mb-2 uppercase tracking-wide">
+          Current row operation
+        </div>
+
+        <div className="text-[12px] leading-snug text-sky-900 whitespace-pre-wrap">
+          {d2OpText ??
+            'Click "Next pivot step" to preview and then apply each operation.'}
+        </div>
+      </div>
+
+      {/* MATRIX FULL WIDTH BELOW */}
+      <div className="overflow-x-auto">
+        {d2StepMatrix ? (
+          <MatrixViewFrac
+            M={d2StepMatrix}
+            rows={d2!.rows}
+            cols={d2!.cols}
+            activeCol={d2Done ? null : d2PivotCol}
+            blueRows={d2Done ? [] : d2BlueRows}
+            redRows={d2Done ? [] : d2RedRows}
+            pivotCells={d2Done ? d2PivotCellsFinal : []}  // <-- NEW
+          />
+        ) : rref2?.R && rref2.R.length ? (
           <MatrixViewFrac
             M={rref2.R}
             rows={d2!.rows}
             cols={d2!.cols}
-            caption={pivotsCaption2}
+            caption={pivotsCaption2 ?? "Full RREF(∂₂) over ℚ"}
+            pivotCells={d2Done ? d2PivotCellsFinal : []}  // <-- NEW
           />
         ) : (
-          <div className="text-sm text-gray-600">(click "Reduce (RREF)")</div>
+          <div className="text-sm text-gray-600">
+            (click "Reduce (RREF)" above, or start step-by-step)
+          </div>
         )}
-      </Section>
+      </div>
+    </Section>
+
+
 
       <Section title="RREF(d1) over Q">
         {rref1?.R && rref1.R.length ? (
@@ -1910,28 +2705,68 @@ return (
       </Section>
 
       {/* HOMOLOGY SUMMARY */}
+      {/* HOMOLOGY SUMMARY */}
       <Section title="Homology (Z & R)">
         {summary.length === 0 ? (
-          <div className="text-sm text-gray-600">(compute homology)</div>
+          <div className="text-sm text-gray-600">
+            (compute homology to see the groups)
+          </div>
         ) : (
-          <div className="text-sm">
-            {summary.map(
-              ({ k, n_k, rank_dk, rank_dk1, beta, torsion }) => (
-                <div key={k} className="mb-1">
-                  <div className="font-medium">{`H_${k}:`}</div>
-                  <div>{`n_k=${n_k}, rank(d_${k})=${rank_dk}, rank(d_${
-                    k + 1
-                  })=${rank_dk1} => beta_${k}=${beta}`}</div>
-                  <div>
-                    {`Z: Z^{beta_${k}} + `}
-                    {torsion.length
-                      ? torsion.map((t) => `Z/${t}`).join(" + ")
-                      : "0 (no torsion)"}
+          <div className="space-y-4 text-sm">
+
+            {/* Explanation */}
+            <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-[12px] leading-snug">
+              <div className="font-semibold text-amber-900 mb-1">How H_k is computed</div>
+              <ul className="list-disc ml-4 space-y-0.5">
+                <li>C_k = free group generated by k-simplices</li>
+                <li>n_k = dim C_k</li>
+                <li>rank(d_k) = dim Im d_k</li>
+                <li>beta{k} = n_k − rank(d_k) − rank(d_(k+1))</li>
+                <li>H_k(Z) ≅ Z^{beta_k} + torsion</li>
+                <li>H_k(R) ≅ R^{beta_k} (no torsion)</li>
+              </ul>
+            </div>
+
+            <div className="grid md:grid-cols-3 gap-3">
+              {summary.map(({ k, n_k, rank_dk, rank_dk1, beta, torsion }) => (
+                <div
+                  key={k}
+                  className="rounded-2xl border bg-gray-50 px-3 py-2 flex flex-col gap-1"
+                >
+                  {/* Header */}
+                  <div className="flex items-center justify-between">
+                    <div className="font-semibold text-gray-800">{`H_${k}`}</div>
+                    <span className="px-2 py-0.5 rounded-full bg-white border text-[11px] text-gray-600">
+                      {`beta_${k} = ${beta}`}
+                    </span>
                   </div>
-                  <div>{`R: dim = beta_${k}`}</div>
+
+                  {/* Numeric part */}
+                  <div className="mt-1 text-[12px] text-gray-700 space-y-0.5">
+                    <div className="font-mono">
+                      {`n_k=${n_k}, rank(d_${k})=${rank_dk}, rank(d_${k + 1})=${rank_dk1}`}
+                    </div>
+                  </div>
+
+                  {/* Z part */}
+                  <div className="mt-2 text-[12px] text-gray-800 space-y-0.5">
+                    <div className="font-semibold">Over Z:</div>
+                    <div className="font-mono break-words">
+                      {`Z: Z^{beta_${k}} + ${
+                        torsion.length
+                          ? torsion.map((t) => `Z/${t}`).join(" + ")
+                          : "0 (no torsion)"
+                      }`}
+                    </div>
+
+                    {/* R part */}
+                    <div className="font-semibold mt-1">Over R:</div>
+                    <div className="font-mono">{`R: dim = beta_${k}`}</div>
+                  </div>
                 </div>
-              )
-            )}
+              ))}
+            </div>
+
           </div>
         )}
       </Section>
