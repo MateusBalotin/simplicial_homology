@@ -1230,6 +1230,10 @@ export default function App() {
   const [rankD2, setRankD2] = useState<number | null>(null);
   const [rankD1, setRankD1] = useState<number | null>(null);
 
+  const [showRankD2, setShowRankD2] = useState(false);
+  const [showRankD1, setShowRankD1] = useState(false);
+
+  const [showHomologyDetails, setShowHomologyDetails] = useState(false);
 
   const [d2, setD2] = useState<{
     M: bigint[][];
@@ -1250,6 +1254,7 @@ export default function App() {
     R: Frac[][];
     pivots: { row: number; col: number }[];
   } | null>(null);
+
 
   const [trace, setTrace] = useState<string[]>([]);
   const [summary, setSummary] = useState<
@@ -1275,6 +1280,46 @@ export default function App() {
 
   const [selectedSimplex, setSelectedSimplex] = useState<number[] | null>(null);
   const [rp2Decomp, setRp2Decomp] = useState(false);
+
+    // RP²: pares de arestas coladas (cada par tem 2 arestas orientadas)
+  const rp2GluedPairs: [number, number][][] = [
+    [
+      [5, 0],
+      [2, 3],
+    ],
+    [
+      [4, 5],
+      [3, 2],
+    ],
+    [
+      [1, 0],
+      [4, 3],
+    ],
+  ];
+  const rp2PairLabels = ["a", "b", "c"];
+
+  // índice do par atual (-1 = nenhum destacado)
+  const [rp2PairIndex, setRp2PairIndex] = useState<number>(-1);
+
+  // arestas do par atual que vão ser desenhadas em vermelho na RP²
+  const rp2HighlightedEdges = useMemo(
+    () =>
+      space === "rp2" && rp2PairIndex >= 0
+        ? rp2GluedPairs[rp2PairIndex]
+        : [],
+    [space, rp2PairIndex]
+  );
+
+  function cycleRp2Pair() {
+    // sempre que ciclo par, limpo seleção manual de simplex
+    setSelectedSimplex(null);
+    setRp2PairIndex((prev) => {
+      const next = prev + 1;
+      // 0,1,2, depois volta para -1 (sem par)
+      return next > rp2GluedPairs.length - 1 ? -1 : next;
+    });
+  }
+
 
   // RP²: which glued edge pair is highlighted (-1 = none, 0..2 = a,b,c)
   const [rp2EdgePairIndex, setRp2EdgePairIndex] = useState<number>(-1);
@@ -1379,8 +1424,10 @@ export default function App() {
     const R1 = rrefOverQ(d1.M);
     setRref2(R2);
     setRref1(R1);
-    setRankD2(R2.rank);
-    setRankD1(R1.rank);
+
+    setRankD2(R2.pivots.length);
+    setRankD1(R1.pivots.length);
+
 
 
     // pivôs finais de d2 e d1
@@ -1846,6 +1893,7 @@ function nextD2PivotStep() {
 
     const finalPivots = computePivotsFromFracMatrix(A);
     setD1PivotCellsFinal(finalPivots);
+    setRankD1(finalPivots.length);
 
     setD1StepMatrix(A);
     setD1PendingOp(null);
@@ -2052,6 +2100,7 @@ function nextD2PivotStep() {
 
     const finalPivots = computePivotsFromFracMatrix(A);
     setD2PivotCellsFinal(finalPivots);
+    setRankD2(finalPivots.length);
 
     setD2StepMatrix(A);
     setD2PendingOp(null);
@@ -2406,20 +2455,40 @@ return (
       {/* CHAINS - Can be pinned with SVG */}
       {chainsWithSVG ? (
         <div className="grid md:grid-cols-2 gap-4 mb-4">
-          <Section 
+                    <Section 
             title="Chains (simplices grouped by dimension)"
             withSVGToggle
             isWithSVG={chainsWithSVG}
             onToggleWithSVG={setChainsWithSVG}
           >
-            <div className="max-h-[500px] overflow-auto">
-              <ChainsView
-                by={by}
-                selected={selectedSimplex}
-                onSelect={setSelectedSimplex}
-              />
-            </div>
+            <ChainsView
+              by={by}
+              selected={selectedSimplex}
+              onSelect={setSelectedSimplex}
+            />
+
+            {space === "rp2" && (
+              <div className="mt-3 text-xs text-gray-700 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={cycleRp2Pair}
+                  className="px-2 py-1 rounded bg-red-600 text-white text-[11px] hover:bg-red-700"
+                >
+                  {rp2PairIndex < 0
+                    ? "Show glued edge pair"
+                    : "Next glued edge pair"}
+                </button>
+                <span>
+                  {rp2PairIndex < 0
+                    ? "No pair highlighted"
+                    : `Current pair: ${
+                        rp2PairLabels[rp2PairIndex] ?? `#${rp2PairIndex + 1}`
+                      }`}
+                </span>
+              </div>
+            )}
           </Section>
+
 
           <div className="flex flex-col justify-center">
             {faces.length ? (
@@ -2443,7 +2512,7 @@ return (
             )}
           </div>
         </div>
-      ) : (
+            ) : (
         <Section
           title="Chains (simplices grouped by dimension)"
           withSVGToggle
@@ -2455,8 +2524,30 @@ return (
             selected={selectedSimplex}
             onSelect={setSelectedSimplex}
           />
+
+          {space === "rp2" && (
+            <div className="mt-3 text-xs text-gray-700 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={cycleRp2Pair}
+                className="px-2 py-1 rounded bg-red-600 text-white text-[11px] hover:bg-red-700"
+              >
+                {rp2PairIndex < 0
+                  ? "Show glued edge pair"
+                  : "Next glued edge pair"}
+              </button>
+              <span>
+                {rp2PairIndex < 0
+                  ? "No pair highlighted"
+                  : `Current pair: ${
+                      rp2PairLabels[rp2PairIndex] ?? `#${rp2PairIndex + 1}`
+                    }`}
+              </span>
+            </div>
+          )}
         </Section>
       )}
+
 
     {/* d2 - Can be pinned with SVG */}
     {d2WithSVG ? (
@@ -2624,6 +2715,7 @@ return (
                 faces={faces as number[][]}
                 selectedSimplex={selectedSimplex}
                 rp2Decomp={rp2Decomp}
+                
               />
             </div>
           ) : (
@@ -3089,6 +3181,15 @@ return (
       >
         Finish all steps
       </button>
+
+      {/* NEW: toggle rank popup */}
+      <button
+        className="px-3 py-1 rounded border text-xs hover:bg-blue-50 disabled:opacity-40"
+        onClick={() => setShowRankD2((v) => !v)}
+        disabled={rankD2 === null}
+      >
+        {showRankD2 ? "Hide rank(∂₂)" : "Show rank(∂₂)"}
+      </button>
     </div>
 
     {/* TEXT ABOVE MATRIX (same layout as d1) */}
@@ -3107,7 +3208,23 @@ return (
       )}
     </div>
 
-    {/* MATRIX BELOW TEXT (same as d1 layout) */}
+    {/* RANK POPUP – only when button is active */}
+    {showRankD2 && (
+      <div className="mb-3 text-xs text-gray-800 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2">
+        <div className="font-semibold">Rank(∂₂) over ℚ</div>
+        {rankD2 !== null ? (
+          <div>
+            dim(im ∂₂) = <b>{rankD2}</b>
+          </div>
+        ) : (
+          <div className="text-gray-500">
+            (click "Reduce (RREF)" to compute the rank)
+          </div>
+        )}
+      </div>
+    )}
+
+    {/* MATRIX BELOW TEXT */}
     <div className="overflow-x-auto">
       {d2StepMatrix ? (
         <MatrixViewFrac
@@ -3137,183 +3254,133 @@ return (
 
 
     <Section title="RREF(d1) over Q">
-      {/* Controls for step-by-step RREF(d1) */}
-      <div className="flex flex-wrap gap-2 mb-2">
-        <button
-          className="px-3 py-1 rounded bg-blue-600 text-white text-xs hover:bg-blue-700 disabled:opacity-50"
-          onClick={startD1StepRref}
-          disabled={!d1}
-        >
-          Start / Reset step-by-step
-        </button>
+    {/* Controls for step-by-step RREF(d1) */}
+    <div className="flex flex-wrap gap-2 mb-2">
+      <button
+        className="px-3 py-1 rounded bg-blue-600 text-white text-xs hover:bg-blue-700 disabled:opacity-50"
+        onClick={startD1StepRref}
+        disabled={!d1}
+      >
+        Start / Reset step-by-step
+      </button>
 
-        <button
-          className="px-3 py-1 rounded border text-xs hover:bg-gray-100 disabled:opacity-50"
-          onClick={prevD1StepRref}
-          disabled={!d1StepMatrix || d1History.length === 0}
-        >
-          Back one step
-        </button>
+      <button
+        className="px-3 py-1 rounded border text-xs hover:bg-gray-100 disabled:opacity-50"
+        onClick={prevD1StepRref}
+        disabled={!d1StepMatrix || d1History.length === 0}
+      >
+        Back one step
+      </button>
 
-        <button
-          className="px-3 py-1 rounded bg-emerald-600 text-white text-xs hover:bg-emerald-700 disabled:opacity-40"
-          onClick={nextD1StepRref}
-          disabled={!d1StepMatrix || d1Done}
-        >
-          Next pivot step
-        </button>
+      <button
+        className="px-3 py-1 rounded bg-emerald-600 text-white text-xs hover:bg-emerald-700 disabled:opacity-40"
+        onClick={nextD1StepRref}
+        disabled={!d1StepMatrix || d1Done}
+      >
+        Next pivot step
+      </button>
 
-        <button
-          className="px-3 py-1 rounded bg-gray-700 text-white text-xs hover:bg-gray-800 disabled:opacity-40"
-          onClick={finishD1StepRref}
-          disabled={!d1StepMatrix || d1Done}
-        >
-          Finish all steps
-        </button>
-      </div>
+      <button
+        className="px-3 py-1 rounded bg-gray-700 text-white text-xs hover:bg-gray-800 disabled:opacity-40"
+        onClick={finishD1StepRref}
+        disabled={!d1StepMatrix || d1Done}
+      >
+        Finish all steps
+      </button>
 
-      {/* TEXT EXPLANATION ABOVE THE MATRIX */}
-      <div className="mb-3 text-xs text-gray-700 leading-snug space-y-1">
-        <div className="font-semibold">Operação atual em ∂₁</div>
-        {d1OpText ? (
-          <pre className="bg-gray-50 rounded-xl border px-2 py-2 whitespace-pre-wrap">
-            {d1OpText}
-          </pre>
+      {/* NEW: toggle rank popup */}
+      <button
+        className="px-3 py-1 rounded border text-xs hover:bg-blue-50 disabled:opacity-40"
+        onClick={() => setShowRankD1((v) => !v)}
+        disabled={rankD1 === null}
+      >
+        {showRankD1 ? "Hide rank(∂₁)" : "Show rank(∂₁)"}
+      </button>
+    </div>
+
+    {/* TEXT EXPLANATION ABOVE THE MATRIX */}
+    <div className="mb-3 text-xs text-gray-700 leading-snug space-y-1">
+      <div className="font-semibold">Operação atual em ∂₁</div>
+      {d1OpText ? (
+        <pre className="bg-gray-50 rounded-xl border px-2 py-2 whitespace-pre-wrap">
+          {d1OpText}
+        </pre>
+      ) : (
+        <p>
+          Use{" "}
+          <span className="font-semibold">"Next pivot step"</span> para
+          ver as operações de RREF linha a linha em ∂₁.
+        </p>
+      )}
+    </div>
+
+    {/* RANK POPUP – only when button is active */}
+    {showRankD1 && (
+      <div className="mb-3 text-xs text-gray-800 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2">
+        <div className="font-semibold">Rank(∂₁) over ℚ</div>
+        {rankD1 !== null ? (
+          <div>
+            dim(im ∂₁) = <b>{rankD1}</b>
+          </div>
         ) : (
-          <p>
-            Use{" "}
-            <span className="font-semibold">"Next pivot step"</span> para
-            ver as operações de RREF linha a linha em ∂₁.
-          </p>
-        )}
-      </div>
-
-      {/* MATRIX BELOW THE TEXT */}
-      <div className="overflow-x-auto">
-        {d1StepMatrix ? (
-          <MatrixViewFrac
-            M={d1StepMatrix}
-            rows={d1!.rows}
-            cols={d1!.cols}
-            activeCol={d1Done ? null : d1PivotCol}
-            blueRows={d1Done ? [] : d1BlueRows}
-            redRows={d1Done ? [] : d1RedRows}
-            pivotCells={d1Done ? d1PivotCellsFinal : []}
-          />
-        ) : rref1?.R && rref1.R.length ? (
-          <MatrixViewFrac
-            M={rref1.R}
-            rows={d1!.rows}
-            cols={d1!.cols}
-            caption={pivotsCaption1 || "Full RREF(∂₁) over ℚ"}
-            pivotCells={d1PivotCellsFinal}
-          />
-        ) : (
-          <div className="text-sm text-gray-600">
-            (click "Reduce (RREF)" above, or start step-by-step)
+          <div className="text-gray-500">
+            (click "Reduce (RREF)" to compute the rank)
           </div>
         )}
       </div>
-    </Section>
+    )}
+
+    {/* MATRIX BELOW THE TEXT */}
+    <div className="overflow-x-auto">
+      {d1StepMatrix ? (
+        <MatrixViewFrac
+          M={d1StepMatrix}
+          rows={d1!.rows}
+          cols={d1!.cols}
+          activeCol={d1Done ? null : d1PivotCol}
+          blueRows={d1Done ? [] : d1BlueRows}
+          redRows={d1Done ? [] : d1RedRows}
+          pivotCells={d1Done ? d1PivotCellsFinal : []}
+        />
+      ) : rref1?.R && rref1.R.length ? (
+        <MatrixViewFrac
+          M={rref1.R}
+          rows={d1!.rows}
+          cols={d1!.cols}
+          caption={pivotsCaption1 || "Full RREF(∂₁) over ℚ"}
+          pivotCells={d1PivotCellsFinal}
+        />
+      ) : (
+        <div className="text-sm text-gray-600">
+          (click "Reduce (RREF)" above, or start step-by-step)
+        </div>
+      )}
+    </div>
+  </Section>
 
 
-
-            <Section title="Smith Normal Form of d₂ (over ℤ)">
-        {!d2 ? (
-          <div className="text-sm text-gray-600">
-            (build boundary matrices first)
+    {/* HOMOLOGY SUMMARY */}
+    <Section title="Homology (Z & R)">
+      {summary.length === 0 ? (
+        <div className="text-sm text-gray-600">
+          (compute homology to see the groups)
+        </div>
+      ) : (
+        <div className="space-y-4 text-sm">
+          {/* Button to toggle the explanation */}
+          <div className="flex justify-end">
+            <button
+              className="px-3 py-1 rounded-full border text-xs bg-white hover:bg-amber-50 text-amber-900 border-amber-300"
+              onClick={() => setShowHomologyDetails((v) => !v)}
+            >
+              {showHomologyDetails
+                ? 'Hide how H_k is computed'
+                : 'Show how H_k is computed'}
+            </button>
           </div>
-        ) : snfSteps && snfSteps.length > 0 ? (
-          <>
-            {/* Controles de passo-a-passo */}
-            <div className="flex flex-wrap gap-2 mb-2">
-              <button
-                className="px-3 py-1 rounded bg-blue-600 text-white text-xs hover:bg-blue-700 disabled:opacity-50"
-                onClick={go6_snf}
-              >
-                Recomeçar SNF passo a passo
-              </button>
 
-              <button
-                className="px-3 py-1 rounded border text-xs hover:bg-gray-100 disabled:opacity-50"
-                onClick={() =>
-                  setSnfStepIndex((i) => (i > 0 ? i - 1 : 0))
-                }
-                disabled={snfStepIndex <= 0}
-              >
-                Passo anterior
-              </button>
-
-              <button
-                className="px-3 py-1 rounded bg-emerald-600 text-white text-xs hover:bg-emerald-700 disabled:opacity-40"
-                onClick={() =>
-                  setSnfStepIndex((i) =>
-                    snfSteps && i < snfSteps.length - 1 ? i + 1 : i
-                  )
-                }
-                disabled={!snfSteps || snfStepIndex >= snfSteps.length - 1}
-              >
-                Próximo passo
-              </button>
-
-              <button
-                className="px-3 py-1 rounded bg-gray-700 text-white text-xs hover:bg-gray-800 disabled:opacity-40"
-                onClick={() =>
-                  snfSteps && setSnfStepIndex(snfSteps.length - 1)
-                }
-                disabled={!snfSteps || snfStepIndex >= snfSteps.length - 1}
-              >
-                Ir para forma final
-              </button>
-            </div>
-
-            {/* Caixa com descrição da etapa atual */}
-            <div className="mb-3 p-3 rounded-xl border border-sky-400 bg-sky-50 shadow-sm">
-              <div className="text-xs font-semibold text-sky-950 mb-2 uppercase tracking-wide">
-                Etapa da Forma Normal de Smith
-              </div>
-              <div className="text-[12px] leading-snug text-sky-900 whitespace-pre-wrap">
-                {`Passo ${snfStepIndex + 1} de ${snfSteps.length}`}
-                {"\n"}
-                {snfSteps[snfStepIndex].description}
-              </div>
-            </div>
-
-            {/* Matriz inteira sendo transformada */}
-            <div className="overflow-x-auto">
-              <MatrixView
-                M={snfSteps[snfStepIndex].matrix}
-                rows={d2!.rows}
-                cols={d2!.cols}
-              />
-            </div>
-
-            {/* Diagonal final, se já calculada */}
-            {snfDiag && (
-              <div className="mt-2 text-sm">
-                diag(d₂) = [{snfDiag.join(", ")}]
-              </div>
-            )}
-          </>
-        ) : (
-          <div className="text-sm text-gray-600">
-            (click "6) Smith Normal Form (Z)" to generate the steps)
-          </div>
-        )}
-      </Section>
-
-
-           {/* HOMOLOGY SUMMARY */}
-      {/* HOMOLOGY SUMMARY */}
-      <Section title="Homology (Z & R)">
-        {summary.length === 0 ? (
-          <div className="text-sm text-gray-600">
-            (compute homology to see the groups)
-          </div>
-        ) : (
-          <div className="space-y-4 text-sm">
-
-            {/* Explicação em português, com LaTeX */}
+          {/* Explicação em português, com LaTeX (only if button is ON) */}
+          {showHomologyDetails && (
             <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-[12px] leading-snug">
               <div className="font-semibold text-amber-900 mb-1">
                 Como <InlineMath math="H_k" /> é calculado
@@ -3343,8 +3410,7 @@ return (
                 <li>
                   Logo,{" "}
                   <InlineMath math="\dim H_k = \dim \ker(d_k) - \dim \operatorname{im}(d_{k+1})" />{" "}
-                  e, substituindo, obtemos a fórmula prática
-                  {" "}
+                  e, substituindo, obtemos a fórmula prática{" "}
                   <InlineMath math="\beta_k = n_k - \operatorname{rank}(d_k) - \operatorname{rank}(d_{k+1})" />.
                 </li>
                 <li>
@@ -3361,86 +3427,88 @@ return (
                 </li>
               </ul>
             </div>
+          )}
 
-            {/* Cards por grau k, em LaTeX */}
-            <div className="grid md:grid-cols-3 gap-3">
-              {summary.map((item) => {
-                const { k, n_k, rank_dk, rank_dk1, beta, torsion } = item;
+          {/* Cards por grau k, em LaTeX */}
+          <div className="grid md:grid-cols-3 gap-3">
+            {summary.map((item) => {
+              const { k, n_k, rank_dk, rank_dk1, beta, torsion } = item;
 
-                // Linha com n_k e ranks
-                const infoLatex =
-                  `n_{${k}} = ${n_k},\\; ` +
-                  `\\operatorname{rank}(d_{${k}}) = ${rank_dk},\\; ` +
-                  `\\operatorname{rank}(d_{${k + 1}}) = ${rank_dk1}`;
+              // Linha com n_k e ranks
+              const infoLatex =
+                `n_{${k}} = ${n_k},\\; ` +
+                `\\operatorname{rank}(d_{${k}}) = ${rank_dk},\\; ` +
+                `\\operatorname{rank}(d_{${k + 1}}) = ${rank_dk1}`;
 
-                // Fórmula explícita de dim H_k
-                const dimHLatex =
-                  `\\dim H_{${k}} = n_{${k}} - \\operatorname{rank}(d_{${k}}) - \\operatorname{rank}(d_{${k +
-                  1}}) = ${beta}`;
+              // Fórmula explícita de dim H_k
+              const dimHLatex =
+                `\\dim H_{${k}} = n_{${k}} - \\operatorname{rank}(d_{${k}}) - \\operatorname{rank}(d_{${k +
+                1}}) = ${beta}`;
 
-                const torsionLatex =
-                  torsion && torsion.length > 0
-                    ? torsion
-                        .map((t) => `\\mathbb{Z}/${t}\\mathbb{Z}`)
-                        .join(" \\oplus ")
-                    : "0";
+              const torsionLatex =
+                torsion && torsion.length > 0
+                  ? torsion
+                      .map((t) => `\\mathbb{Z}/${t}\\mathbb{Z}`)
+                      .join(" \\oplus ")
+                  : "0";
 
-                const hzLatex =
-                  `H_{${k}}(\\mathbb{Z}) \\cong \\mathbb{Z}^{${beta}}` +
-                  (torsion && torsion.length > 0
-                    ? " \\oplus " + torsionLatex
-                    : "");
+              const hzLatex =
+                `H_{${k}}(\\mathbb{Z}) \\cong \\mathbb{Z}^{${beta}}` +
+                (torsion && torsion.length > 0
+                  ? " \\oplus " + torsionLatex
+                  : "");
 
-                const hrLatex =
-                  `H_{${k}}(\\mathbb{R}) \\cong \\mathbb{R}^{${beta}}`;
+              const hrLatex =
+                `H_{${k}}(\\mathbb{R}) \\cong \\mathbb{R}^{${beta}}`;
 
-                return (
-                  <div
-                    key={k}
-                    className="rounded-2xl border bg-gray-50 px-3 py-2 flex flex-col gap-1"
-                  >
-                    {/* Cabeçalho: H_k e beta_k */}
-                    <div className="flex items-center justify-between">
-                      <div className="font-semibold text-gray-800">
-                        <InlineMath math={`H_{${k}}`} />
-                      </div>
-                      <span className="px-2 py-0.5 rounded-full bg-white border text-[11px] text-gray-600">
-                        <InlineMath math={`\\beta_{${k}} = ${beta}`} />
-                      </span>
+              return (
+                <div
+                  key={k}
+                  className="rounded-2xl border bg-gray-50 px-3 py-2 flex flex-col gap-1"
+                >
+                  {/* Cabeçalho: H_k e beta_k */}
+                  <div className="flex items-center justify-between">
+                    <div className="font-semibold text-gray-800">
+                      <InlineMath math={`H_{${k}}`} />
                     </div>
+                    <span className="px-2 py-0.5 rounded-full bg-white border text-[11px] text-gray-600">
+                      <InlineMath math={`\\beta_{${k}} = ${beta}`} />
+                    </span>
+                  </div>
 
-                    {/* Dados numéricos + fórmula de dim H_k */}
-                    <div className="mt-1 text-[12px] text-gray-700 space-y-0.5">
-                      <div className="font-mono">
-                        <InlineMath math={infoLatex} />
-                      </div>
-                      <div className="font-mono">
-                        <InlineMath math={dimHLatex} />
-                      </div>
+                  {/* Dados numéricos + fórmula de dim H_k */}
+                  <div className="mt-1 text-[12px] text-gray-700 space-y-0.5">
+                    <div className="font-mono">
+                      <InlineMath math={infoLatex} />
                     </div>
-
-                    {/* H_k(Z) e H_k(R) */}
-                    <div className="mt-2 text-[12px] text-gray-800 space-y-0.5">
-                      <div className="font-semibold">Sobre ℤ:</div>
-                      <div className="font-mono break-words">
-                        <InlineMath math={hzLatex} />
-                        {torsion && torsion.length === 0 && (
-                          <>{"  (sem torção)"}</>
-                        )}
-                      </div>
-
-                      <div className="font-semibold mt-1">Sobre ℝ:</div>
-                      <div className="font-mono">
-                        <InlineMath math={hrLatex} />
-                      </div>
+                    <div className="font-mono">
+                      <InlineMath math={dimHLatex} />
                     </div>
                   </div>
-                );
-              })}
-            </div>
+
+                  {/* H_k(Z) e H_k(R) */}
+                  <div className="mt-2 text-[12px] text-gray-800 space-y-0.5">
+                    <div className="font-semibold">Sobre ℤ:</div>
+                    <div className="font-mono break-words">
+                      <InlineMath math={hzLatex} />
+                      {torsion && torsion.length === 0 && (
+                        <>{"  (sem torção)"}</>
+                      )}
+                    </div>
+
+                    <div className="font-semibold mt-1">Sobre ℝ:</div>
+                    <div className="font-mono">
+                      <InlineMath math={hrLatex} />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        )}
-      </Section>
+        </div>
+      )}
+    </Section>
+
 
 
       
