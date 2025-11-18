@@ -375,16 +375,29 @@ function allSimplicesFromTriangles(triangles: [number,number,number][]) {
   return [...verts, ...edges, ...tris] as number[][];
 }
 
-function buildRP2Minimal(){
-  // 6-vertex, 15-edge, 10-triangle simplicial triangulation of RP^2
-  // This facet set includes the (0,5) edge and yields rank(d2)=10 over Q.
-  const tris: [number,number,number][] = [
-    [0,1,2], [0,1,3], [0,4,5], [0,2,5], [1,3,5],
-    [1,4,5], [2,3,4], [2,4,5], [0,1,4], [3,4,5],
+function buildRP2Minimal() {
+  // 6-vertex, 15-edge, 10-triangle minimal triangulation of RP^2
+  // Referência: [123], [124], [135], [146], [156],
+  //             [236], [245], [256], [345], [346]
+  // (vértices renumerados de 1..6 para 0..5)
+
+  const tris: [number, number, number][] = [
+    [0, 1, 2],
+    [0, 1, 3],
+    [0, 2, 4],
+    [0, 3, 5],
+    [0, 4, 5],
+    [1, 2, 5],
+    [1, 3, 4],
+    [1, 4, 5],
+    [2, 3, 4],
+    [2, 3, 5],
   ];
+
   const simplices = allSimplicesFromTriangles(tris);
   return { simplices, faces: tris as unknown as number[][] };
 }
+
 
 function buildComplex(space: 'torus'|'klein'|'rp2', m:number, n:number){
   if (space==='rp2'){
@@ -1480,8 +1493,6 @@ export default function App() {
     setBy(new Map());
     setSelectedSimplex(null);
 
-    
-
     const { simplices, faces } = buildComplex(space, m, n);
     setSimplices(simplices as number[][]);
     setFaces(faces as number[][]);
@@ -1492,48 +1503,7 @@ export default function App() {
     );
 
 
-      // reset chain groups
-  setBy(new Map());
-  setFaces([]);
-  setSimplices([]);
-
-  // reset boundaries
-  setD2(null);
-  setD1(null);
-
-  // reset visible columns
-  setD2VisibleCols(0);
-  setD1VisibleCols(0);
-
-  // reset RREF(d2)
-  setRref2(null);
-  setD2StepMatrix(null);
-  setD2History([]);
-  setD2PivotCellsFinal([]);
-  setD2Done(false);
-  setD2OpText("");
-  setShowRankD2(false);
-
-  // reset RREF(d1)
-  setRref1(null);
-  setD1StepMatrix(null);
-  setD1History([]);
-  setD1PivotCellsFinal([]);
-  setD1Done(false);
-  setD1OpText("");
-  setShowRankD1(false);
-
-  // reset SNF
-  setSnfDiag(null);
-  setSnfSteps(null);
-  setSnfStepIndex(0);
-  setShowSnfDiag(false);
-
-  // reset selections
-  setSelectedSimplex(null);
-  setActiveD2Col(null);
-  setActiveD1Col(null);
-
+    
   };
 
   const go2_chains = () => {
