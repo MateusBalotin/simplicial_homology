@@ -2885,6 +2885,7 @@ function buildSnfViewInfo(description: string): SnfViewInfo {
 
   return { text, activeCol, blueRows, redRows };
 }
+
 type SnfStepInfo = {
   pivotRow: number | null;   // índice 0-based
   pivotCol: number | null;   // índice 0-based
@@ -2895,7 +2896,6 @@ type SnfStepInfo = {
   redRows: number[];         // linhas auxiliares (vermelho)
   activeCol: number | null;  // coluna destacada (azul)
 };
-
 function parseSnfStepInfo(description: string): SnfStepInfo {
   let pivotRow: number | null = null;
   let pivotCol: number | null = null;
@@ -2909,9 +2909,9 @@ function parseSnfStepInfo(description: string): SnfStepInfo {
   let m: RegExpMatchArray | null;
 
   // -------------------------------------------------
-  // Troca de LINHAS
+  // Troca de LINHAS   (ex: "Troca de linhas r8 e r9")
   // -------------------------------------------------
-  m = description.match(/Troca de linhas r(\d+)\s*e\s*r(\d+)/);
+  m = description.match(/Troca de linhas r(\d+)\s*e\s*r(\d+)/i);
   if (m) {
     const r1 = Number(m[1]);
     const r2 = Number(m[2]);
@@ -2920,86 +2920,143 @@ function parseSnfStepInfo(description: string): SnfStepInfo {
     resumo = `Resumo: R${r1 + 1} ↔ R${r2 + 1}`;
     blueRows = [r1];
     redRows = [r2];
+
+    // SNF normalmente trabalha na diagonal: aproximamos o pivô
+    const base = Math.min(r1, r2);
+    pivotRow = base;
+    pivotCol = base;
   }
 
   // -------------------------------------------------
-  // Troca de COLUNAS
-  // Aqui simplificamos: qualquer descrição com
-  // "Troca de colunas" vamos assumir que está
-  // colocando o primeiro pivô em (1,1).
+  // Troca de COLUNAS  (ex: "Troca de colunas c1 e c2")
   // -------------------------------------------------
-  if (!operacao && /Troca de colunas/.test(description)) {
+  if (!operacao && /Troca de colunas/i.test(description)) {
+    m = description.match(/c(\d+)[^\d]+c(\d+)/i);
+    const c1 = m ? Number(m[1]) : 0;
+    const c2 = m ? Number(m[2]) : 1;
+    const j = Math.min(c1, c2);
+
     operacao = "Troca de colunas";
-    linhas = "Colunas: C1 / C2";
-    resumo = "Resumo: troca de colunas para posicionar o pivô em (1,1).";
+    linhas = `Colunas: C${c1 + 1} / C${c2 + 1}`;
+    resumo = `Resumo: troca de colunas para reposicionar o pivô na coluna ${j + 1}.`;
 
-    // mostramos o pivô previsto em (1,1)
-    pivotRow = 0;
-    pivotCol = 0;
-    activeCol = 0; // destaca a primeira coluna na pausa
+    // agora supomos que o pivô fica na diagonal (j,j)
+    pivotRow = j;
+    pivotCol = j;
+    activeCol = j;
   }
 
   // -------------------------------------------------
-  // Combinação linear nas LINHAS rI e rR para reduzir (rR, cJ)
+  // Eliminação completa na COLUNA
+  //  ex: "Eliminação completa na coluna j=7: zera (r11,c7) usando a linha r8."
   // -------------------------------------------------
   if (!operacao) {
     m = description.match(
-      /Combinação linear nas linhas r(\d+)\s*e\s*r(\d+)\s*para reduzir a entrada em \(r(\d+), c(\d+)\)/
+      /Eliminação completa na coluna j=(\d+): zera \(r(\d+),\s*c(\d+)\) usando a linha r(\d+)/i
     );
     if (m) {
-      const i = Number(m[1]);       // linha do pivô
-      const r = Number(m[2]);       // linha que estamos limpando
-      const rTarget = Number(m[3]); // deve coincidir com r
-      const j = Number(m[4]);       // coluna do pivô
+      const j = Number(m[1]);      // coluna do pivô
+      const rTarget = Number(m[2]); // linha zerada
+      const c = Number(m[3]);      // deve coincidir com j
+      const rPivot = Number(m[4]); // linha pivô
 
-      pivotRow = i;
+      pivotRow = rPivot;
       pivotCol = j;
 
       operacao = "Soma (eliminação por linha)";
-      linhas = `Linhas: R${r + 1} / R${i + 1}`;
+      linhas = `Linhas: R${rTarget + 1} / R${rPivot + 1}`;
       resumo =
-        `Resumo: combinação nas linhas R${r + 1} e R${i + 1} ` +
-        `para reduzir a entrada em (${rTarget + 1}, ${j + 1}).`;
+        `Resumo: eliminação completa na coluna ${j + 1}, ` +
+        `zerando a entrada em (${rTarget + 1}, ${c + 1}) usando R${rPivot + 1}.`;
 
-      blueRows = [r];   // linha alterada
-      redRows = [i];    // linha pivô
-      activeCol = j;    // coluna do pivô
+      blueRows = [rTarget];
+      redRows = [rPivot];
+      activeCol = j;
     }
   }
 
   // -------------------------------------------------
-  // Combinação linear nas COLUNAS cJ e cC para reduzir (rI, cC)
+  // Eliminação completa na LINHA
+  //  ex: "Eliminação completa na linha r=7: zera (r7,c8) usando a coluna c3."
   // -------------------------------------------------
   if (!operacao) {
     m = description.match(
-      /Combinação linear nas colunas c(\d+)\s*e\s*c(\d+)\s*para reduzir a entrada em \(r(\d+), c(\d+)\)/
+      /Eliminação completa na linha r=(\d+): zera \(r(\d+),\s*c(\d+)\) usando a coluna c(\d+)/i
     );
     if (m) {
-      const j = Number(m[1]);       // coluna do pivô
-      const c = Number(m[2]);       // coluna que está sendo limpa
-      const i = Number(m[3]);       // linha do pivô
-      const cTarget = Number(m[4]); // deve coincidir com c
+      const rPivot = Number(m[1]); // linha do pivô
+      const r = Number(m[2]);      // deve coincidir com rPivot
+      const cTarget = Number(m[3]); // coluna zerada
+      const j = Number(m[4]);      // coluna do pivô
+
+      pivotRow = rPivot;
+      pivotCol = j;
+
+      operacao = "Soma (eliminação por coluna)";
+      linhas = `Colunas: C${j + 1} / C${cTarget + 1}`;
+      resumo =
+        `Resumo: eliminação completa na linha ${rPivot + 1}, ` +
+        `zerando a entrada em (${r + 1}, ${cTarget + 1}) usando a coluna C${j + 1}.`;
+
+      blueRows = [rPivot];
+      activeCol = j;
+    }
+  }
+
+  // -------------------------------------------------
+  // Combinação linear nas LINHAS rI e rR
+  // -------------------------------------------------
+  if (!operacao) {
+    m = description.match(/Combinação(?: linear)? nas linhas r(\d+)\s*e\s*r(\d+)/i);
+    if (m) {
+      const i = Number(m[1]);    // linha pivô
+      const r = Number(m[2]);    // linha alterada
+      const m2 = description.match(/\(r(\d+),\s*c(\d+)\)/i);
+
+      const rTarget = m2 ? Number(m2[1]) : r;
+      const c = m2 ? Number(m2[2]) : 0;
 
       pivotRow = i;
+      pivotCol = c;
+
+      operacao = "Soma (eliminação por linha)";
+      linhas = `Linhas: R${r + 1} / R${i + 1}`;
+      resumo = `Resumo: ${description}`;
+
+      blueRows = [rTarget];
+      redRows = [i];
+      activeCol = c;
+    }
+  }
+
+  // -------------------------------------------------
+  // Combinação linear nas COLUNAS cJ e cC
+  // -------------------------------------------------
+  if (!operacao) {
+    m = description.match(/Combinação(?: linear)? nas colunas c(\d+)\s*e\s*c(\d+)/i);
+    if (m) {
+      const j = Number(m[1]); // coluna pivô
+      const c = Number(m[2]); // coluna alterada
+      const m2 = description.match(/\(r(\d+),\s*c(\d+)\)/i);
+      const r = m2 ? Number(m2[1]) : 0;
+      const cTarget = m2 ? Number(m2[2]) : c;
+
+      pivotRow = r;
       pivotCol = j;
 
       operacao = "Soma (eliminação por coluna)";
       linhas = `Colunas: C${j + 1} / C${c + 1}`;
-      resumo =
-        `Resumo: combinação nas colunas C${j + 1} e C${c + 1} ` +
-        `para reduzir a entrada em (${i + 1}, ${cTarget + 1}).`;
+      resumo = `Resumo: ${description}`;
 
-      activeCol = j;  // coluna do pivô em azul
+      activeCol = j;
     }
   }
 
   // -------------------------------------------------
-  // Combinação linear genérica de LINHAS para reduzir (rR, cC)
+  // Combinação genérica de LINHAS
   // -------------------------------------------------
   if (!operacao) {
-    m = description.match(
-      /Combinação linear de linhas para reduzir a entrada em \(r(\d+), c(\d+)\)/
-    );
+    m = description.match(/Combinação linear de linhas.*\(r(\d+),\s*c(\d+)\)/i);
     if (m) {
       const r = Number(m[1]);
       const c = Number(m[2]);
@@ -3007,19 +3064,17 @@ function parseSnfStepInfo(description: string): SnfStepInfo {
       pivotCol = c;
       operacao = "Soma (eliminação por linha)";
       linhas = `Linhas: envolve R${r + 1} e uma linha pivô`;
-      resumo = `Resumo: combinação de linhas para reduzir a entrada em (${r + 1}, ${c + 1}).`;
+      resumo = `Resumo: ${description}`;
       blueRows = [r];
       activeCol = c;
     }
   }
 
   // -------------------------------------------------
-  // Combinação linear genérica de COLUNAS para reduzir (rR, cC)
+  // Combinação genérica de COLUNAS
   // -------------------------------------------------
   if (!operacao) {
-    m = description.match(
-      /Combinação linear de colunas para reduzir a entrada em \(r(\d+), c(\d+)\)/
-    );
+    m = description.match(/Combinação linear de colunas.*\(r(\d+),\s*c(\d+)\)/i);
     if (m) {
       const r = Number(m[1]);
       const c = Number(m[2]);
@@ -3027,38 +3082,37 @@ function parseSnfStepInfo(description: string): SnfStepInfo {
       pivotCol = c;
       operacao = "Soma (eliminação por coluna)";
       linhas = `Colunas: envolve C${c + 1} e uma coluna pivô`;
-      resumo = `Resumo: combinação de colunas para reduzir a entrada em (${r + 1}, ${c + 1}).`;
+      resumo = `Resumo: ${description}`;
       blueRows = [r];
       activeCol = c;
     }
   }
 
   // -------------------------------------------------
-  // Multiplicação por -1 para tornar o pivô em (r,c) positivo
+  // Multiplicação por -1 para tornar o pivô não negativo
   // -------------------------------------------------
   if (!operacao) {
     m = description.match(
-      /Multiplicação por -1 para tornar o pivô em \(r(\d+), c(\d+)\) positivo/
+      /Multiplicação da linha r(\d+) por -1 para tornar o pivô não negativo/i
     );
     if (m) {
       const r = Number(m[1]);
-      const c = Number(m[2]);
       pivotRow = r;
-      pivotCol = c;
+      pivotCol = r;
       operacao = "Multiplicação por -1 no pivô";
       linhas = `Linhas: R${r + 1}`;
-      resumo = `Resumo: pivô em (${r + 1}, ${c + 1}) multiplicado por -1 para ficar positivo.`;
+      resumo = `Resumo: ${description}`;
       blueRows = [r];
-      activeCol = c;
+      activeCol = r;
     }
   }
 
   // -------------------------------------------------
-  // Zerando a entrada em (rR, cC) usando o pivô em (rI, cJ)
+  // Zerando a entrada em (rR, cC) usando o pivô em ...
   // -------------------------------------------------
   if (!operacao) {
     m = description.match(
-      /Zerando a entrada em \(r(\d+), c(\d+)\) usando o pivô em \(r(\d+), c(\d+)\)/
+      /Zerando a entrada em \(r(\d+),\s*c(\d+)\).*pivô em \(r(\d+),\s*c(\d+)\)/i
     );
     if (m) {
       const r1 = Number(m[1]);
@@ -3069,18 +3123,16 @@ function parseSnfStepInfo(description: string): SnfStepInfo {
       pivotCol = c2;
 
       if (r1 !== r2) {
-        // eliminação por LINHA
         operacao = "Soma (eliminação por linha)";
         linhas = `Linhas: R${r1 + 1} / R${r2 + 1}`;
-        resumo = `Resumo: zera a entrada em (${r1 + 1}, ${c1 + 1}) usando o pivô em (${r2 + 1}, ${c2 + 1}).`;
+        resumo = `Resumo: ${description}`;
         blueRows = [r1];
         redRows = [r2];
         activeCol = c1;
       } else {
-        // eliminação por COLUNA
         operacao = "Soma (eliminação por coluna)";
         linhas = `Colunas: C${c1 + 1} / C${c2 + 1}`;
-        resumo = `Resumo: zera a entrada em (${r1 + 1}, ${c1 + 1}) usando o pivô em (${r2 + 1}, ${c2 + 1}).`;
+        resumo = `Resumo: ${description}`;
         blueRows = [r1];
         activeCol = c1;
       }
@@ -3088,41 +3140,62 @@ function parseSnfStepInfo(description: string): SnfStepInfo {
   }
 
   // -------------------------------------------------
-  // Multiplicação da linha rX por -1 para tornar o pivô não negativo
+  // Casos finais genéricos (quase-diagonal / vazia)
   // -------------------------------------------------
   if (!operacao) {
-    m = description.match(
-      /Multiplicação da linha r(\d+) por -1 para tornar o pivô não negativo/
-    );
-    if (m) {
-      const r = Number(m[1]);
-
-      // na SNF o pivô está na diagonal (r,r) neste estágio
-      pivotRow = r;
-      pivotCol = r;
-
-      operacao = "Multiplicação por -1 no pivô";
-      linhas = `Linhas: R${r + 1}`;
-      resumo = `Resumo: ${description}`;
-      blueRows = [r];
-      activeCol = r;
-    }
-  }
-
-  // -------------------------------------------------
-  // Casos genéricos / finais
-  // -------------------------------------------------
-  if (!operacao) {
-    if (/Matriz quase-diagonal obtida/.test(description)) {
+    if (/Matriz quase-diagonal obtida/i.test(description)) {
       operacao = "SNF final obtida";
       resumo = `Resumo: ${description}`;
-    } else if (/Matriz vazia/.test(description)) {
+    } else if (/Matriz vazia/i.test(description)) {
       operacao = "Matriz vazia";
       resumo = `Resumo: ${description}`;
     } else {
       operacao = description;
       resumo = `Resumo: ${description}`;
     }
+  }
+
+  // =================================================
+  // FALLBACK: se ainda não temos cor/pivô decentes,
+  // tenta deduzir rX e cY do texto.
+  // =================================================
+  const rAll: number[] = [];
+  const rRegex = /r(\d+)/gi;
+  let rm: RegExpExecArray | null;
+  while ((rm = rRegex.exec(description)) !== null) {
+    rAll.push(Number(rm[1]));
+  }
+
+  if (blueRows.length === 0 && redRows.length === 0) {
+    if (
+      rAll.length >= 2 &&
+      (/linha/i.test(operacao) || /linha/i.test(description))
+    ) {
+      blueRows = [rAll[0]];
+      redRows = [rAll[1]];
+    } else if (
+      rAll.length >= 1 &&
+      (/linha/i.test(operacao) || /linha/i.test(description))
+    ) {
+      blueRows = [rAll[0]];
+    }
+  }
+
+  if (activeCol == null) {
+    const cMatch = description.match(/c(\d+)/i);
+    if (cMatch) {
+      activeCol = Number(cMatch[1]);
+    }
+  }
+
+  // se ainda não temos pivot, chuta a partir das infos acima
+  if (pivotRow == null && blueRows.length > 0) {
+    pivotRow = blueRows[0];
+  } else if (pivotRow == null && rAll.length > 0) {
+    pivotRow = rAll[0];
+  }
+  if (pivotCol == null && activeCol != null) {
+    pivotCol = activeCol;
   }
 
   return {
@@ -3139,20 +3212,21 @@ function parseSnfStepInfo(description: string): SnfStepInfo {
 
 
 
-function formatSnfOp(description: string): string {
-  const info = parseSnfStepInfo(description);
 
-  const pivotLine = `Pivot: (${info.pivotRow !== null ? info.pivotRow + 1 : "–"}, ${
-    info.pivotCol !== null ? info.pivotCol + 1 : "–"
-  })`;
+
+function formatSnfOp(desc: string): string {
+  const info = parseSnfStepInfo(desc);
+  const pr = info.pivotRow != null ? info.pivotRow + 1 : "-";
+  const pc = info.pivotCol != null ? info.pivotCol + 1 : "-";
 
   return [
-    pivotLine,
+    `Pivot: (${pr}, ${pc})`,
     `Operação: ${info.operacao}`,
     info.linhas,
     info.resumo,
   ].join("\n");
 }
+
 
 
 
@@ -4240,8 +4314,7 @@ return (
     </div>
   </Section>
 
-        {/* FORMA NORMAL DE SMITH (∂₂ sobre ℤ) */}
-    {/* FORMA NORMAL DE SMITH (∂₂ sobre ℤ) */}
+     {/* FORMA NORMAL DE SMITH (∂₂ sobre ℤ) */}
     <Section title="Forma Normal de Smith (∂₂ sobre ℤ)">
       {/* Controles da SNF passo a passo */}
       <div className="flex flex-wrap gap-2 mb-2">
@@ -4266,15 +4339,19 @@ return (
           className="px-3 py-1 rounded border text-xs hover:bg-gray-100 disabled:opacity-50"
           onClick={() => {
             if (!snfSteps || snfSteps.length === 0) return;
-            // se estou no preview, só cancela o preview
             if (snfPreview) {
+              // se estava em preview, só cancela o preview
               setSnfPreview(false);
             } else {
-              // senão volta uma matriz
+              // volta uma matriz
               setSnfStepIndex((i) => Math.max(0, i - 1));
             }
           }}
-          disabled={!snfSteps || snfSteps.length === 0 || snfStepIndex <= 0}
+          disabled={
+            !snfSteps ||
+            snfSteps.length === 0 ||
+            (snfStepIndex === 0 && !snfPreview)
+          }
         >
           Voltar um passo
         </button>
@@ -4283,13 +4360,13 @@ return (
           className="px-3 py-1 rounded bg-emerald-600 text-white text-xs hover:bg-emerald-700 disabled:opacity-40"
           onClick={() => {
             if (!snfSteps || snfSteps.length === 0) return;
-            
-            // se ainda NÃO estou em preview → entra em preview da próxima operação
+
+            // 1º clique: entra em "pausa" (preview da próxima operação)
             if (!snfPreview) {
-              if (snfStepIndex >= snfSteps.length - 1) return; // nada depois
+              if (snfStepIndex >= snfSteps.length - 1) return;
               setSnfPreview(true);
             } else {
-              // se já estou em preview → aplica a operação (avança matriz)
+              // 2º clique: aplica a operação (avança para a próxima matriz)
               setSnfStepIndex((i) => Math.min(i + 1, snfSteps.length - 1));
               setSnfPreview(false);
             }
@@ -4307,7 +4384,7 @@ return (
           className="px-3 py-1 rounded bg-gray-700 text-white text-xs hover:bg-gray-800 disabled:opacity-40"
           onClick={() => {
             if (!snfSteps || snfSteps.length === 0) return;
-            setSnfPreview(false); 
+            setSnfPreview(false);
             setSnfStepIndex(snfSteps.length - 1);
           }}
           disabled={
@@ -4325,26 +4402,21 @@ return (
           onClick={() => setShowSnfDiag((v) => !v)}
           disabled={!snfDiag || snfDiag.length === 0}
         >
-          {showSnfDiag
-            ? "Esconder diagonal SNF(∂₂)"
-            : "Mostrar diagonal SNF(∂₂)"}
+          {showSnfDiag ? "Esconder diagonal SNF(∂₂)" : "Mostrar diagonal SNF(∂₂)"}
         </button>
       </div>
 
-      {/* Texto da operação atual – mesmo formato do RREF(d₂) */}
+      {/* Texto da operação atual – no preview mostra a PRÓXIMA operação */}
       <div className="mb-3 text-xs text-gray-700 leading-snug space-y-1">
         <div className="font-semibold">Operação atual na SNF(∂₂)</div>
         {snfSteps && snfSteps.length > 0 ? (
           (() => {
-            // se estou em preview ⇒ mostrar a operação da PRÓXIMA matriz
             const idxForText =
               snfPreview && snfStepIndex < snfSteps.length - 1
                 ? snfStepIndex + 1
                 : snfStepIndex;
-
             const step = snfSteps[idxForText];
             const text = formatSnfOp(step.description);
-
             return (
               <pre className="bg-gray-50 rounded-xl border px-2 py-2 whitespace-pre-wrap">
                 {text}
@@ -4353,8 +4425,8 @@ return (
           })()
         ) : (
           <p>
-            Use <span className="font-semibold">"Próximo passo"</span> para
-            ver as operações da SNF(∂₂) passo a passo.
+            Use <span className="font-semibold">"Próximo passo"</span> para ver as
+            operações da SNF(∂₂) passo a passo.
           </p>
         )}
       </div>
@@ -4365,16 +4437,12 @@ return (
           <div className="font-semibold">Diagonal da SNF de ∂₂</div>
           <div className="mt-1">
             diag(∂₂) = [
-            {snfDiag.map((d, idx) =>
-              (idx === 0 ? "" : ", ") + d.toString()
-            )}
-            ]
+            {snfDiag.map((d, idx) => (idx === 0 ? "" : ", ") + d.toString())}]
           </div>
           {(() => {
             const torsion = snfDiag
               .filter((x) => x !== 0n && x !== 1n && x !== -1n)
               .map((x) => (x < 0n ? -x : x));
-
             if (torsion.length === 0) {
               return (
                 <div className="mt-1 text-gray-700">
@@ -4382,46 +4450,39 @@ return (
                 </div>
               );
             }
-
             return (
               <div className="mt-1 text-gray-700">
                 Fatores de torção (d &gt; 1) vindos da SNF de ∂₂:{" "}
-                {torsion.map((t, idx) =>
-                  (idx === 0 ? "" : ", ") + t.toString()
-                )}
+                {torsion.map((t, idx) => (idx === 0 ? "" : ", ") + t.toString())}
               </div>
             );
           })()}
         </div>
       )}
 
-      {/* Matriz da SNF, com mesmo esquema de cores do RREF(d₂) */}
+      {/* Matriz da SNF, com esquema de cores + preview */}
       <div className="overflow-x-auto">
         {d2 && snfSteps && snfSteps.length > 0 ? (
           (() => {
-            // matriz atual SEMPRE é o passo snfStepIndex
+            // matriz sempre é a do passo atual
             const current = snfSteps[snfStepIndex];
             const A = current.matrix;
             const Mfrac = A.map((row) => row.map((x) => Frac.from(x)));
 
             const snfDone = snfStepIndex === snfSteps.length - 1;
 
-            let info: SnfStepInfo = {
-              pivotRow: null,
-              pivotCol: null,
-              operacao: "",
-              linhas: "",
-              resumo: "",
-              blueRows: [],
-              redRows: [],
-              activeCol: null,
-            };
-
+            // info de preview (próxima operação) para cores na pausa
+            // info da operação para cores:
+            // - se estamos em preview: usa a PRÓXIMA operação
+            // - senão: usa a operação do passo atual
+            let info: SnfStepInfo | null = null;
             if (snfPreview && snfStepIndex < snfSteps.length - 1) {
               const nextStep = snfSteps[snfStepIndex + 1];
               info = parseSnfStepInfo(nextStep.description);
+            } else {
+              const thisStep = snfSteps[snfStepIndex];
+              info = parseSnfStepInfo(thisStep.description);
             }
-
 
             const pivotCells = snfDone
               ? (() => {
@@ -4441,12 +4502,13 @@ return (
                 M={Mfrac}
                 rows={d2.rows}
                 cols={d2.cols}
-                activeCol={snfPreview ? info.activeCol : null}
-                blueRows={snfPreview ? info.blueRows : []}
-                redRows={snfPreview ? info.redRows : []}
+                activeCol={info ? info.activeCol : null}
+                blueRows={info ? info.blueRows : []}
+                redRows={info ? info.redRows : []}
                 pivotCells={pivotCells}
               />
             );
+
           })()
         ) : (
           <p className="text-sm text-gray-600">
@@ -4455,8 +4517,8 @@ return (
           </p>
         )}
       </div>
-
     </Section>
+
 
 
     {/* RESUMO DE HOMOLOGIA */}
