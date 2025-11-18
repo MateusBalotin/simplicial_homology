@@ -1493,6 +1493,14 @@ export default function App() {
     setBy(new Map());
     setSelectedSimplex(null);
 
+    
+    // resetar SNF
+    setSnfDiag(null);
+    setSnfSteps(null);
+    setSnfStepIndex(0);
+    setShowSnfDiag(false);
+
+
     const { simplices, faces } = buildComplex(space, m, n);
     setSimplices(simplices as number[][]);
     setFaces(faces as number[][]);
@@ -1527,6 +1535,13 @@ export default function App() {
     // restart step view
     setD2VisibleCols(0);
     setD1VisibleCols(0);
+
+      // reset SNF porque d₂ mudou
+      setSnfDiag(null);
+      setSnfSteps(null);
+      setSnfStepIndex(0);
+      setShowSnfDiag(false);
+
     log(
       `Built boundary matrices: d2 shape=(${
         D2.M.length
@@ -3980,48 +3995,48 @@ return (
 
       {/* Matriz da SNF, com mesmo esquema de cores do RREF(d₂) */}
       <div className="overflow-x-auto">
-        {snfSteps && snfSteps.length > 0 ? (
-          (() => {
-            const step = snfSteps[snfStepIndex];
-            const A = step.matrix;
-            const Mfrac = A.map((row) => row.map((x) => Frac.from(x)));
+      {d2 && snfSteps && snfSteps.length > 0 ? (
+        (() => {
+          const step = snfSteps[snfStepIndex];
+          const A = step.matrix;
+          const Mfrac = A.map((row) => row.map((x) => Frac.from(x)));
 
-            const info = parseSnfStepInfo(step.description); // azul / verde / vermelho
-            const snfDone = snfStepIndex === snfSteps.length - 1;
+          const info = parseSnfStepInfo(step.description);
+          const snfDone = snfStepIndex === snfSteps.length - 1;
 
-            // pivôs finais: diagonal não-nula no ÚLTIMO passo
-            const pivotCells = snfDone
-              ? (() => {
-                  const mRows = A.length;
-                  const nCols = mRows ? A[0].length : 0;
-                  const s = Math.min(mRows, nCols);
-                  const out: { row: number; col: number }[] = [];
-                  for (let k = 0; k < s; k++) {
-                    if (A[k][k] !== 0n) out.push({ row: k, col: k });
-                  }
-                  return out;
-                })()
-              : [];
+          const pivotCells = snfDone
+            ? (() => {
+                const mRows = A.length;
+                const nCols = mRows ? A[0].length : 0;
+                const s = Math.min(mRows, nCols);
+                const out: { row: number; col: number }[] = [];
+                for (let k = 0; k < s; k++) {
+                  if (A[k][k] !== 0n) out.push({ row: k, col: k });
+                }
+                return out;
+              })()
+            : [];
 
-            return (
-              <MatrixViewFrac
-                M={Mfrac}
-                rows={d2!.rows}
-                cols={d2!.cols}
-                caption={`Passo ${snfStepIndex + 1} / ${snfSteps.length} da SNF(∂₂)`}
-                activeCol={snfDone ? null : info.activeCol}
-                blueRows={snfDone ? [] : info.blueRows}
-                redRows={snfDone ? [] : info.redRows}
-                pivotCells={pivotCells}
-              />
-            );
-          })()
-        ) : (
-          <div className="text-sm text-gray-600">
-            (clique em "Iniciar / Reset SNF(∂₂)" para ver a SNF passo a passo)
-          </div>
-        )}
-      </div>
+          return (
+            <MatrixViewFrac
+              M={Mfrac}
+              rows={d2.rows}
+              cols={d2.cols}
+              activeCol={info.activeCol}
+              blueRows={info.blueRows}
+              redRows={info.redRows}
+              pivotCells={pivotCells}
+            />
+          );
+        })()
+      ) : (
+        <p className="text-sm text-gray-600">
+          (clique em <b>"Iniciar / Reset SNF(∂₂)"</b> para ver a forma normal de
+          Smith passo a passo)
+        </p>
+      )}
+    </div>
+
     </Section>
 
 
