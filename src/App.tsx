@@ -62,53 +62,121 @@ function rankOverQ(mat: bigint[][]){
 // ======================================================
 // Smith Normal Form over Z (lightweight)
 // ======================================================
-function absBig(x: bigint){ return x<0n? -x : x; }
-function gcdBig(a: bigint,b: bigint){ a=absBig(a); b=absBig(b); while(b!==0n){ const t=a%b; a=b; b=t;} return a; }
-
-function smithNormalFormZ(Ain: bigint[][]){
-  const m = Ain.length; const n = m? Ain[0].length:0;
-  const A: bigint[][] = Ain.map(row=>row.map(x=>BigInt(x)));
-  let i=0, j=0;
-  while(i<m && j<n){
-    let pi=-1, pj=-1; outer: for(let r=i;r<m;r++) for(let c=j;c<n;c++) if(A[r][c]!==0n){ pi=r; pj=c; break outer; }
-    if (pi===-1) break;
-    if (pi!==i){ const tmp=A[i]; A[i]=A[pi]; A[pi]=tmp; }
-    if (pj!==j){ for(let r=0;r<m;r++){ const t=A[r][j]; A[r][j]=A[r][pj]; A[r][pj]=t; } }
-    let changed=true;
-    while(changed){
-      changed=false;
-      for(let r=i+1;r<m;r++) if (A[r][j]!==0n){
-        const g=gcdBig(absBig(A[i][j]), absBig(A[r][j]));
-        const a=A[i][j]/g, b=A[r][j]/g;
-        for(let c=j;c<n;c++) A[r][c]=a*A[r][c]-b*A[i][c];
-        changed=true;
-      }
-      for(let c=j+1;c<n;c++) if (A[i][c]!==0n){
-        const g=gcdBig(absBig(A[i][j]), absBig(A[i][c]));
-        const a=A[i][j]/g, b=A[i][c]/g;
-        for(let r=0;r<m;r++) A[r][c]=a*A[r][c]-b*A[r][j];
-        changed=true;
-      }
-      if (A[i][j]<0n){ A[i][j] = -A[i][j]; changed=true; }
-    }
-    for(let r=0;r<m;r++) if(r!==i && A[r][j]!==0n){
-      const q = A[r][j]/A[i][j];
-      for(let c=j;c<n;c++) A[r][c]-=q*A[i][c];
-    }
-    for(let c=0;c<n;c++) if(c!==j && A[i][c]!==0n){
-      const q = A[i][c]/A[i][j];
-      for(let r=0;r<m;r++) A[r][c]-=q*A[r][j];
-    }
-    i++; j++;
+// ======================================================
+// Smith Normal Form sobre ℤ (BigInt) + versão com passos
+// ======================================================
+function absBig(x: bigint) { return x < 0n ? -x : x; }
+function gcdBig(a: bigint, b: bigint) {
+  a = absBig(a);
+  b = absBig(b);
+  while (b !== 0n) {
+    const t = a % b;
+    a = b;
+    b = t;
   }
-  return A; // nearly-diagonal; diagonal entries are the invariant factors
+  return a;
 }
 
-function snfDiagonal(A: bigint[][]){
+/**
+ * Núcleo: computa a SNF por operações de linha/coluna unimodulares.
+ * Retorna uma matriz quase diagonal; a diagonal contém os fatores invariantes.
+ */
+function smithNormalFormZ(Ain: bigint[][]): bigint[][] {
+  const m = Ain.length;
+  const n = m ? Ain[0].length : 0;
+  const A: bigint[][] = Ain.map(row => row.map(x => BigInt(x)));
+
+  let i = 0, j = 0;
+  while (i < m && j < n) {
+    // 1) escolhe um pivô não nulo no bloco (i..m-1, j..n-1)
+    let pi = -1, pj = -1;
+    outer: for (let r = i; r < m; r++) {
+      for (let c = j; c < n; c++) {
+        if (A[r][c] !== 0n) {
+          pi = r; pj = c;
+          break outer;
+        }
+      }
+    }
+    if (pi === -1) break; // toda a parte restante é zero
+
+    // 2) traz o pivô para a posição (i,j) com trocas de linha/coluna
+    if (pi !== i) {
+      const tmp = A[i];
+      A[i] = A[pi];
+      A[pi] = tmp;
+    }
+    if (pj !== j) {
+      for (let r = 0; r < m; r++) {
+        const t = A[r][j];
+        A[r][j] = A[r][pj];
+        A[r][pj] = t;
+      }
+    }
+
+    // 3) usa o algoritmo de Euclides em linhas/colunas para tornar A[i][j]
+    //    um divisor "mínimo" das entradas na linha i e coluna j
+    let changed = true;
+    while (changed) {
+      changed = false;
+
+      // combinações lineares nas linhas (abaixo de i) para reduzir a coluna j
+      for (let r = i + 1; r < m; r++) if (A[r][j] !== 0n) {
+        const g = gcdBig(absBig(A[i][j]), absBig(A[r][j]));
+        const a = A[i][j] / g;
+        const b = A[r][j] / g;
+        for (let c = j; c < n; c++) {
+          A[r][c] = a * A[r][c] - b * A[i][c];
+        }
+        changed = true;
+      }
+
+      // combinações lineares nas colunas (à direita de j) para reduzir a linha i
+      for (let c = j + 1; c < n; c++) if (A[i][c] !== 0n) {
+        const g = gcdBig(absBig(A[i][j]), absBig(A[i][c]));
+        const a = A[i][j] / g;
+        const b = A[i][c] / g;
+        for (let r = 0; r < m; r++) {
+          A[r][c] = a * A[r][c] - b * A[r][j];
+        }
+        changed = true;
+      }
+
+      // normaliza o pivô para ser ≥ 0
+      if (A[i][j] < 0n) {
+        A[i][j] = -A[i][j];
+        changed = true;
+      }
+    }
+
+    // 4) zera o resto da coluna j
+    for (let r = 0; r < m; r++) if (r !== i && A[r][j] !== 0n) {
+      const q = A[r][j] / A[i][j];
+      for (let c = j; c < n; c++) {
+        A[r][c] -= q * A[i][c];
+      }
+    }
+
+    // 5) zera o resto da linha i
+    for (let c = 0; c < n; c++) if (c !== j && A[i][c] !== 0n) {
+      const q = A[i][c] / A[i][j];
+      for (let r = 0; r < m; r++) {
+        A[r][c] -= q * A[r][j];
+      }
+    }
+
+    i++; j++;
+  }
+
+  // A agora está em forma quase diagonal; a diagonal são os fatores invariantes
+  return A;
+}
+
+function snfDiagonal(A: bigint[][]): bigint[] {
   const D = smithNormalFormZ(A);
   const diag: bigint[] = [];
-  const s = Math.min(D.length, D[0]?.length||0);
-  for(let k=0;k<s;k++) diag.push(D[k][k]);
+  const s = Math.min(D.length, D[0]?.length || 0);
+  for (let k = 0; k < s; k++) diag.push(D[k][k]);
   return diag;
 }
 
@@ -121,7 +189,7 @@ type SnfSnapshot = {
 };
 
 function cloneBigMatrix(A: bigint[][]): bigint[][] {
-  return A.map((row) => row.slice());
+  return A.map(row => row.slice());
 }
 
 function smithNormalFormZWithSteps(
@@ -129,7 +197,7 @@ function smithNormalFormZWithSteps(
 ): { D: bigint[][]; steps: SnfSnapshot[] } {
   const m = Ain.length;
   const n = m ? Ain[0].length : 0;
-  const A: bigint[][] = Ain.map((row) => row.map((x) => BigInt(x)));
+  const A: bigint[][] = Ain.map(row => row.map(x => BigInt(x)));
   const steps: SnfSnapshot[] = [];
 
   const record = (description: string) => {
@@ -143,17 +211,14 @@ function smithNormalFormZWithSteps(
 
   record("Matriz inteira inicial para ∂₂ (d₂) sobre ℤ.");
 
-  let i = 0,
-    j = 0;
+  let i = 0, j = 0;
   while (i < m && j < n) {
-    // escolhe um pivô não-nulo a partir do bloco (i,j)
-    let pi = -1,
-      pj = -1;
+    // pivô não nulo no bloco (i,j)
+    let pi = -1, pj = -1;
     outer: for (let r = i; r < m; r++) {
       for (let c = j; c < n; c++) {
         if (A[r][c] !== 0n) {
-          pi = r;
-          pj = c;
+          pi = r; pj = c;
           break outer;
         }
       }
@@ -161,12 +226,8 @@ function smithNormalFormZWithSteps(
     if (pi === -1) break;
 
     if (pi !== i) {
-      const tmp = A[i];
-      A[i] = A[pi];
-      A[pi] = tmp;
-      record(
-        `Troca de linhas r${i} e r${pi} para trazer um pivô diferente de zero.`
-      );
+      const tmp = A[i]; A[i] = A[pi]; A[pi] = tmp;
+      record(`Troca de linhas r${i} e r${pi} para trazer um pivô diferente de zero.`);
     }
 
     if (pj !== j) {
@@ -175,89 +236,73 @@ function smithNormalFormZWithSteps(
         A[r][j] = A[r][pj];
         A[r][pj] = t;
       }
-      record(
-        `Troca de colunas c${j} e c${pj} para posicionar o pivô na coluna j=${j}.`
-      );
+      record(`Troca de colunas c${j} e c${pj} para posicionar o pivô na coluna j=${j}.`);
     }
 
     let changed = true;
     while (changed) {
       changed = false;
 
-      // combinações de linhas para reduzir a coluna do pivô
-      for (let r = i + 1; r < m; r++) {
-        if (A[r][j] !== 0n) {
-          const g = gcdBig(absBig(A[i][j]), absBig(A[r][j]));
-          const a = A[i][j] / g;
-          const b = A[r][j] / g;
-          for (let c = j; c < n; c++) {
-            A[r][c] = a * A[r][c] - b * A[i][c];
-          }
-          record(
-            `Combinação linear de linhas para reduzir a entrada em (r${r}, c${j}).`
-          );
-          changed = true;
+      // linhas abaixo
+      for (let r = i + 1; r < m; r++) if (A[r][j] !== 0n) {
+        const g = gcdBig(absBig(A[i][j]), absBig(A[r][j]));
+        const a = A[i][j] / g;
+        const b = A[r][j] / g;
+        for (let c = j; c < n; c++) {
+          A[r][c] = a * A[r][c] - b * A[i][c];
         }
+        record(
+          `Combinação linear nas linhas r${i} e r${r} para reduzir a entrada em (r${r}, c${j}).`
+        );
+        changed = true;
       }
 
-      // combinações de colunas para reduzir a linha do pivô
-      for (let c = j + 1; c < n; c++) {
-        if (A[i][c] !== 0n) {
-          const g = gcdBig(absBig(A[i][j]), absBig(A[i][c]));
-          const a = A[i][j] / g;
-          const b = A[i][c] / g;
-          for (let r = 0; r < m; r++) {
-            A[r][c] = a * A[r][c] - b * A[r][j];
-          }
-          record(
-            `Combinação linear de colunas para reduzir a entrada em (r${i}, c${c}).`
-          );
-          changed = true;
+      // colunas à direita
+      for (let c = j + 1; c < n; c++) if (A[i][c] !== 0n) {
+        const g = gcdBig(absBig(A[i][j]), absBig(A[i][c]));
+        const a = A[i][j] / g;
+        const b = A[i][c] / g;
+        for (let r = 0; r < m; r++) {
+          A[r][c] = a * A[r][c] - b * A[r][j];
         }
+        record(
+          `Combinação linear nas colunas c${j} e c${c} para reduzir a entrada em (r${i}, c${c}).`
+        );
+        changed = true;
       }
 
       if (A[i][j] < 0n) {
         A[i][j] = -A[i][j];
-        record(
-          `Multiplicação por -1 para tornar o pivô em (r${i}, c${j}) positivo.`
-        );
+        record(`Multiplicação da linha r${i} por -1 para tornar o pivô não negativo.`);
         changed = true;
       }
     }
 
-    // zera entradas fora do pivô na coluna j
-    for (let r = 0; r < m; r++) {
-      if (r !== i && A[r][j] !== 0n) {
-        const q = A[r][j] / A[i][j];
-        for (let c = j; c < n; c++) {
-          A[r][c] -= q * A[i][c];
-        }
-        record(
-          `Zerando a entrada em (r${r}, c${j}) usando o pivô em (r${i}, c${j}).`
-        );
+    // zera coluna j fora do pivô
+    for (let r = 0; r < m; r++) if (r !== i && A[r][j] !== 0n) {
+      const q = A[r][j] / A[i][j];
+      for (let c = j; c < n; c++) {
+        A[r][c] -= q * A[i][c];
       }
+      record(`Eliminação completa na coluna j=${j}: zera (r${r},c${j}) usando a linha r${i}.`);
     }
 
-    // zera entradas fora do pivô na linha i
-    for (let c = 0; c < n; c++) {
-      if (c !== j && A[i][c] !== 0n) {
-        const q = A[i][c] / A[i][j];
-        for (let r = 0; r < m; r++) {
-          A[r][c] -= q * A[r][j];
-        }
-        record(
-          `Zerando a entrada em (r${i}, c${c}) usando o pivô em (r${i}, c${j}).`
-        );
+    // zera linha i fora do pivô
+    for (let c = 0; c < n; c++) if (c !== j && A[i][c] !== 0n) {
+      const q = A[i][c] / A[i][j];
+      for (let r = 0; r < m; r++) {
+        A[r][c] -= q * A[r][j];
       }
+      record(`Eliminação completa na linha r=${i}: zera (r${i},c${c}) usando a coluna c${j}.`);
     }
 
-    i++;
-    j++;
+    i++; j++;
   }
 
-  record("Matriz quase-diagonal obtida (Forma Normal de Smith).");
+  record("Matriz em forma (quase) diagonal: a diagonal contém os fatores invariantes.");
   return { D: A, steps };
 }
+
 
 
 // ======================================================
@@ -1435,6 +1480,8 @@ export default function App() {
     setBy(new Map());
     setSelectedSimplex(null);
 
+    
+
     const { simplices, faces } = buildComplex(space, m, n);
     setSimplices(simplices as number[][]);
     setFaces(faces as number[][]);
@@ -1443,6 +1490,50 @@ export default function App() {
         m * n
       } (depending on space)`
     );
+
+
+      // reset chain groups
+  setBy(new Map());
+  setFaces([]);
+  setSimplices([]);
+
+  // reset boundaries
+  setD2(null);
+  setD1(null);
+
+  // reset visible columns
+  setD2VisibleCols(0);
+  setD1VisibleCols(0);
+
+  // reset RREF(d2)
+  setRref2(null);
+  setD2StepMatrix(null);
+  setD2History([]);
+  setD2PivotCellsFinal([]);
+  setD2Done(false);
+  setD2OpText("");
+  setShowRankD2(false);
+
+  // reset RREF(d1)
+  setRref1(null);
+  setD1StepMatrix(null);
+  setD1History([]);
+  setD1PivotCellsFinal([]);
+  setD1Done(false);
+  setD1OpText("");
+  setShowRankD1(false);
+
+  // reset SNF
+  setSnfDiag(null);
+  setSnfSteps(null);
+  setSnfStepIndex(0);
+  setShowSnfDiag(false);
+
+  // reset selections
+  setSelectedSimplex(null);
+  setActiveD2Col(null);
+  setActiveD1Col(null);
+
   };
 
   const go2_chains = () => {
