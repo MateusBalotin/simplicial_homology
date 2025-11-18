@@ -11,7 +11,7 @@ class Frac {
   constructor(num: bigint | number = 0n, den: bigint | number = 1n) {
     let N = typeof num === "number" ? BigInt(num) : (num as bigint);
     let D = typeof den === "number" ? BigInt(den) : (den as bigint);
-    if (D === 0n) throw new Error("Zero denominator");
+    if (D === 0n) throw new Error("Denominador zero");
     if (D < 0n) { N = -N; D = -D; }
     const g = Frac._gcd(Frac._abs(N), D);
     this.num = N / g;
@@ -459,6 +459,7 @@ function TriangulationView({
   faces,
   selectedSimplex,
   rp2Decomp,
+  highlightEdges,
 }: {
   space: "torus" | "klein" | "rp2";
   m: number;
@@ -466,6 +467,7 @@ function TriangulationView({
   faces: number[][];
   selectedSimplex: number[] | null;
   rp2Decomp?: boolean;
+  highlightEdges?: [number, number][];
 }) {
   // positions of vertices in the drawing
   const pos = useMemo(() => {
@@ -490,6 +492,41 @@ function TriangulationView({
 
     return P;
   }, [space, m, n, faces]);
+
+    // orientação canônica das 6 arestas de borda da RP²
+  // A convenção é: (0,5) ~ (2,3), (1,2) ~ (4,5), (0,1) ~ (3,4),
+  // sempre coladas com orientações opostas ao longo do hexágono.
+    function orientEdge(u: number, v: number): [number, number] {
+    if (space !== "rp2") return [u, v];
+
+    const a = Math.min(u, v);
+    const b = Math.max(u, v);
+    const key = `${a},${b}`;
+
+    switch (key) {
+      // Par a: {0,5} ~ {2,3}
+      case "0,5":
+        return [5, 0]; // seta subindo à direita
+      case "2,3":
+        return [2, 3]; // seta descendo à esquerda
+
+      // Par b: {1,2} ~ {4,5}
+      case "1,2":
+        return [2, 1]; // seta subindo à direita (lado direito)
+      case "4,5":
+        return [5, 4]; // seta descendo à esquerda (lado esquerdo)
+
+      // Par c: {0,1} ~ {3,4}
+      case "0,1":
+        return [0, 1]; // seta para a direita em cima
+      case "3,4":
+        return [3, 4]; // seta para a esquerda embaixo
+
+      default:
+        return [u, v];
+    }
+  }
+
 
   // undirected edges (for base drawing)
   const edges = useMemo(() => {
@@ -685,13 +722,13 @@ function TriangulationView({
         );
       })}
 
-      {/* ===== EXTRA ARROW FOR SELECTED 1-SIMPLEX ===== */}
-      {selectedSimplex &&
-        selectedSimplex.length === 2 &&
-        (() => {
-          const [u, v] = selectedSimplex;
-          const pu = pos.get(u),
-            pv = pos.get(v);
+       {/* ===== GLUED EDGE PAIRS HIGHLIGHT (RP²) ===== */}
+      {highlightEdges &&
+        highlightEdges.map(([u, v], idx) => {
+          // usa a orientação canônica da RP²
+          const [ou, ov] = orientEdge(u, v);
+          const pu = pos.get(ou);
+          const pv = pos.get(ov);
           if (!pu || !pv) return null;
 
           const x1 = (pu.x + 0.35 * (pv.x - pu.x)) * W;
@@ -701,6 +738,7 @@ function TriangulationView({
 
           return (
             <line
+              key={`glued-${idx}`}
               x1={x1}
               y1={y1}
               x2={x2}
@@ -710,7 +748,36 @@ function TriangulationView({
               markerEnd="url(#arrow-red)"
             />
           );
-        })()}
+        })}
+
+
+            {/* ===== EXTRA ARROW FOR SELECTED 1-SIMPLEX ===== */}
+          {selectedSimplex &&
+            selectedSimplex.length === 2 &&
+            (() => {
+              const [u, v] = orientEdge(selectedSimplex[0], selectedSimplex[1]);
+              const pu = pos.get(u);
+              const pv = pos.get(v);
+              if (!pu || !pv) return null;
+
+              const x1 = (pu.x + 0.35 * (pv.x - pu.x)) * W;
+              const y1 = (pu.y + 0.35 * (pv.y - pu.y)) * H;
+              const x2 = (pu.x + 0.65 * (pv.x - pu.x)) * W;
+              const y2 = (pu.y + 0.65 * (pv.y - pu.y)) * H;
+
+              return (
+                <line
+                  x1={x1}
+                  y1={y1}
+                  x2={x2}
+                  y2={y2}
+                  stroke="rgba(220,38,38,1)"
+                  strokeWidth={3}
+                  markerEnd="url(#arrow-red)"
+                />
+              );
+            })()}
+
 
       {/* ===== VERTICES ===== */}
       {Array.from(pos.entries()).map(([id, p]) => {
@@ -737,7 +804,6 @@ function TriangulationView({
     </svg>
   );
 }
-
 
 
 function Section({
@@ -768,7 +834,7 @@ function Section({
                 checked={isWithSVG}
                 onChange={(e) => onToggleWithSVG?.(e.target.checked)}
               />
-              <span>📍 Pin with SVG</span>
+              <span>📍 Fixar com SVG</span>
             </label>
           )}
           <button
@@ -776,7 +842,7 @@ function Section({
             onClick={() => setOpen((o) => !o)}
             className="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-50"
           >
-            {open ? "Hide" : "Show"}
+            {open ? "Esconder" : "Mostrar"}
           </button>
         </div>
       </div>
@@ -806,7 +872,7 @@ function MatrixView({
   onColClick?: (col: number[], j: number) => void;
 }) {
   if (!M || !M.length)
-    return <div className="text-sm text-gray-600">(empty)</div>;
+    return <div className="text-sm text-gray-600">(vazio)</div>;
 
   return (
     <div className="overflow-auto">
@@ -818,7 +884,7 @@ function MatrixView({
         <thead>
           <tr>
             <th className="px-1 py-0.5 text-left text-gray-500">
-              Rows / Cols
+              Linhas / Colunas
             </th>
             {cols.map((c, j) => {
               const isActive = activeCol === j;
@@ -937,7 +1003,7 @@ function MatrixViewFrac({
   pivotCells = [],
 }: MatrixViewFracProps) {
   if (!M || !M.length) {
-    return <div className="text-sm text-gray-600">(empty)</div>;
+    return <div className="text-sm text-gray-600">(vazio)</div>;
   }
 
   const rowLabels = rows.length ? rows : M.map((_, i) => [i]);
@@ -957,7 +1023,7 @@ function MatrixViewFrac({
           <thead>
             <tr>
               <th className="px-1 py-0.5 text-center text-gray-500">
-                Rows / Cols
+                Linhas / Colunas
               </th>
               {colLabels.map((c, j) => {
                 const isActiveCol = activeCol === j;
@@ -1053,17 +1119,17 @@ function ChainsView({
   onSelect: (sigma: number[] | null) => void;
 }) {
   if (!by || by.size === 0) {
-    return <div className="text-sm text-gray-600">(build chains to see C_k)</div>;
+    return <div className="text-sm text-gray-600">(construa as cadeias para ver C_k)</div>;
   }
 
   const dims = Array.from(by.keys()).sort((a, b) => a - b);
   const maxPerDim = 40;
 
   const labelForK = (k: number) => {
-    if (k === 0) return "vertices";
-    if (k === 1) return "edges";
-    if (k === 2) return "triangles";
-    return `${k}-simplices`;
+    if (k === 0) return "vértices";
+    if (k === 1) return "arestas";
+    if (k === 2) return "triângulos";
+    return `${k}-símplices`;
   };
 
   const handleSimplexClick = (s: number[]) => {
@@ -1101,7 +1167,7 @@ function ChainsView({
 
             {simplices.length === 0 ? (
               <div className="text-xs text-gray-600 italic">
-                (no simplices in this dimension)
+                (nenhum símplice nesta dimensão)
               </div>
             ) : (
               <>
@@ -1130,7 +1196,7 @@ function ChainsView({
                 </div>
                 {extra > 0 && (
                   <div className="mt-1 text-[11px] text-gray-500">
-                    … + {extra} more simplices in C_{k}
+                    … + {extra} símplices adicionais em C_{k}
                   </div>
                 )}
               </>
@@ -1152,6 +1218,8 @@ export default function App() {
 
   const [snfSteps, setSnfSteps] = useState<SnfSnapshot[] | null>(null);
   const [snfStepIndex, setSnfStepIndex] = useState(0);
+  const [showSnfDiag, setShowSnfDiag] = useState(false);
+
 
 
   const [d2ShowHelp, setD2ShowHelp] = useState(false);
@@ -1281,21 +1349,25 @@ export default function App() {
   const [selectedSimplex, setSelectedSimplex] = useState<number[] | null>(null);
   const [rp2Decomp, setRp2Decomp] = useState(false);
 
-    // RP²: pares de arestas coladas (cada par tem 2 arestas orientadas)
   const rp2GluedPairs: [number, number][][] = [
+    // pair a
     [
-      [5, 0],
+      [0, 5],
       [2, 3],
     ],
+    // pair b
     [
+      [1, 2],
       [4, 5],
-      [3, 2],
     ],
+    // pair c
     [
-      [1, 0],
-      [4, 3],
+      [0, 1],
+      [3, 4],
     ],
   ];
+
+
   const rp2PairLabels = ["a", "b", "c"];
 
   // índice do par atual (-1 = nenhum destacado)
@@ -1311,12 +1383,10 @@ export default function App() {
   );
 
   function cycleRp2Pair() {
-    // sempre que ciclo par, limpo seleção manual de simplex
-    setSelectedSimplex(null);
+    setSelectedSimplex(null); // important: don't mix chain selection arrow
     setRp2PairIndex((prev) => {
       const next = prev + 1;
-      // 0,1,2, depois volta para -1 (sem par)
-      return next > rp2GluedPairs.length - 1 ? -1 : next;
+      return next > rp2GluedPairs.length - 1 ? -1 : next; // 0→1→2→-1
     });
   }
 
@@ -1682,7 +1752,7 @@ function nextD2PivotStep() {
     setD2BlueRows([]);
     setD2RedRows([]);
     setD2OpText(
-      "Initialized step-by-step RREF(∂₂). Click 'Next pivot step' to see the first operation."
+      "Inicializando passo a passo RREF(∂₂). Clique 'Next pivot step' para fazer a primeira operação"
     );
     setD2History([]);
   }
@@ -1705,8 +1775,7 @@ function nextD2PivotStep() {
     setD1BlueRows([]);
     setD1RedRows([]);
     setD1OpText(
-      "Initialized step-by-step RREF(∂₁). Click 'Next pivot step' to see the first operation."
-    );
+    "Inicializando passo a passo RREF(∂₁). Clique 'Next pivot step' para fazer a primeira operação");
     setD1History([]);
     setD1PivotCellsFinal([]);
   }
@@ -2279,6 +2348,358 @@ function computePivotsFromFracMatrix(A: Frac[][]): { row: number; col: number }[
   return pivots;
 }
 
+type SnfViewInfo = {
+  text: string;
+  activeCol: number | null;  // coluna em azul
+  blueRows: number[];        // linhas em verde (alvo)
+  redRows: number[];         // linhas em vermelho (pivô)
+};
+
+function buildSnfViewInfo(description: string): SnfViewInfo {
+  let pivotRow: number | null = null;
+  let pivotCol: number | null = null;
+  let activeCol: number | null = null;
+  let blueRows: number[] = [];
+  let redRows: number[] = [];
+
+  let operacao = "";
+  let linhasTxt = "Linhas / Colunas: –";
+  let resumo = "";
+
+  let m: RegExpMatchArray | null;
+
+  // 0) Casos iniciais / finais simples
+  if (/Matriz vazia/.test(description)) {
+    operacao = "Matriz vazia";
+    resumo = `Resumo: ${description}`;
+  } else if (/Matriz inteira inicial/.test(description)) {
+    operacao = "Matriz inicial";
+    resumo = `Resumo: ${description}`;
+  } else if (/Matriz quase-diagonal obtida/.test(description)) {
+    operacao = "SNF final obtida";
+    resumo = `Resumo: ${description}`;
+  }
+
+  // 1) Troca de linhas: "Troca de linhas rI e rPI ..."
+  if (!operacao) {
+    m = description.match(/Troca de linhas r(\d+) e r(\d+)/);
+    if (m) {
+      const i = Number(m[1]);
+      const pi = Number(m[2]);
+      operacao = "Troca de linhas";
+      linhasTxt = `Linhas: R${i + 1} / R${pi + 1}`;
+      resumo = `Resumo: R${i + 1} ↔ R${pi + 1}`;
+      blueRows = [i];
+      redRows = [pi];
+    }
+  }
+
+  // 2) Troca de colunas: "Troca de colunas cJ e cPJ para posicionar o pivô na coluna j=J."
+  if (!operacao) {
+    m = description.match(
+      /Troca de colunas c(\d+) e c(\d+) para posicionar o pivô na coluna j=(\d+)/
+    );
+    if (m) {
+      const j = Number(m[1]);
+      const pj = Number(m[2]);
+      const jpiv = Number(m[3]);
+      operacao = "Troca de colunas";
+      linhasTxt = `Colunas: C${j + 1} / C${pj + 1}`;
+      resumo = `Resumo: C${j + 1} ↔ C${pj + 1} (pivô na coluna ${jpiv + 1}).`;
+      pivotCol = jpiv;
+      activeCol = jpiv;
+    }
+  }
+
+  // 3) Combinação linear de linhas: "Combinação linear de linhas para reduzir a entrada em (rR, cJ)."
+  if (!operacao) {
+    m = description.match(
+      /Combinação linear de linhas para reduzir a entrada em \(r(\d+), c(\d+)\)/
+    );
+    if (m) {
+      const r = Number(m[1]);
+      const j = Number(m[2]);
+      operacao = "Soma (eliminação por linha)";
+      linhasTxt = `Linhas: envolve R${r + 1} e uma linha pivô`;
+      resumo = `Resumo: combinação de linhas para reduzir a entrada em (${r + 1}, ${j + 1}).`;
+      blueRows = [r];           // linha sendo modificada
+      activeCol = j;            // coluna do elemento que estamos mexendo
+    }
+  }
+
+  // 4) Combinação linear de colunas: "Combinação linear de colunas para reduzir a entrada em (rI, cC)."
+  if (!operacao) {
+    m = description.match(
+      /Combinação linear de colunas para reduzir a entrada em \(r(\d+), c(\d+)\)/
+    );
+    if (m) {
+      const i = Number(m[1]);
+      const c = Number(m[2]);
+      operacao = "Soma (eliminação por coluna)";
+      linhasTxt = `Colunas: envolve C${c + 1} e uma coluna pivô`;
+      resumo = `Resumo: combinação de colunas para reduzir a entrada em (${i + 1}, ${c + 1}).`;
+      blueRows = [i];           // destaco a linha do pivô
+      activeCol = c;            // coluna alvo em azul
+    }
+  }
+
+  // 5) Multiplicação por -1 no pivô: "Multiplicação por -1 para tornar o pivô em (rI, cJ) positivo."
+  if (!operacao) {
+    m = description.match(
+      /Multiplicação por -1 para tornar o pivô em \(r(\d+), c(\d+)\) positivo/
+    );
+    if (m) {
+      const i = Number(m[1]);
+      const j = Number(m[2]);
+      operacao = "Multiplicação por -1 no pivô";
+      linhasTxt = `Linhas: R${i + 1}`;
+      resumo = `Resumo: pivô em (${i + 1}, ${j + 1}) multiplicado por -1 para ficar positivo.`;
+      pivotRow = i;
+      pivotCol = j;
+      blueRows = [i];
+      activeCol = j;
+    }
+  }
+
+  // 6a) Zerando entrada por combinação de LINHAS:
+  // "Zerando a entrada em (rR, cJ) usando o pivô em (rI, cJ)."
+  if (!operacao) {
+    m = description.match(
+      /Zerando a entrada em \(r(\d+), c(\d+)\) usando o pivô em \(r(\d+), c(\d+)\)/
+    );
+    if (m) {
+      const r1 = Number(m[1]);
+      const c1 = Number(m[2]);
+      const r2 = Number(m[3]);
+      const c2 = Number(m[4]);
+
+      if (r1 !== r2) {
+        // eliminação por linha
+        operacao = "Soma (eliminação por linha)";
+        linhasTxt = `Linhas: R${r1 + 1} / R${r2 + 1}`;
+        resumo = `Resumo: zera a entrada em (${r1 + 1}, ${c1 + 1}) usando o pivô em (${r2 + 1}, ${c2 + 1}).`;
+        pivotRow = r2;
+        pivotCol = c2;
+        blueRows = [r1];     // linha que está sendo limpa
+        redRows = [r2];      // linha pivô
+        activeCol = c2;
+      } else {
+        // eliminação por coluna: "Zerando (rI, cC) usando pivô em (rI, cJ)."
+        operacao = "Soma (eliminação por coluna)";
+        linhasTxt = `Colunas: C${c1 + 1} / C${c2 + 1}`;
+        resumo = `Resumo: zera a entrada em (${r1 + 1}, ${c1 + 1}) usando o pivô em (${r2 + 1}, ${c2 + 1}).`;
+        pivotRow = r1;
+        pivotCol = c2;
+        blueRows = [r1];     // linha do pivô
+        redRows = [];
+        activeCol = c1;      // coluna que está sendo zerada
+      }
+    }
+  }
+
+  // fallback
+  if (!operacao) {
+    operacao = description;
+    resumo = `Resumo: ${description}`;
+  }
+
+  const pivotLine = `Pivot: (${
+    pivotRow != null ? pivotRow + 1 : "–"
+  }, ${pivotCol != null ? pivotCol + 1 : "–"})`;
+
+  const text =
+    pivotLine +
+    "\n" +
+    `Operação: ${operacao}` +
+    "\n" +
+    linhasTxt +
+    "\n" +
+    resumo;
+
+  return { text, activeCol, blueRows, redRows };
+}
+
+
+
+type SnfStepInfo = {
+  pivotRow: number | null;   // índice 0-based
+  pivotCol: number | null;   // índice 0-based
+  operacao: string;
+  linhas: string;
+  resumo: string;
+  blueRows: number[];        // linhas “alteradas” (verde)
+  redRows: number[];         // linhas auxiliares (vermelho)
+  activeCol: number | null;  // coluna destacada (azul)
+};
+
+function parseSnfStepInfo(description: string): SnfStepInfo {
+  let pivotRow: number | null = null;
+  let pivotCol: number | null = null;
+  let operacao = "";
+  let linhas = "Linhas: —";
+  let resumo = "";
+  let blueRows: number[] = [];
+  let redRows: number[] = [];
+  let activeCol: number | null = null;
+
+  let m: RegExpMatchArray | null;
+
+  // --- Troca de linhas rX e rY ---
+  m = description.match(/Troca de linhas r(\d+) e r(\d+)/);
+  if (m) {
+    const r1 = Number(m[1]);
+    const r2 = Number(m[2]);
+    operacao = "Troca de linhas";
+    linhas = `Linhas: R${r1 + 1} / R${r2 + 1}`;
+    resumo = `Resumo: R${r1 + 1} ↔ R${r2 + 1}`;
+    blueRows = [r1];
+    redRows = [r2];
+  }
+
+  // --- Troca de colunas cX e cY para posicionar o pivô na coluna j=J ---
+  if (!operacao) {
+    m = description.match(/Troca de colunas c(\d+) e c(\d+).*j=(\d+)/);
+    if (m) {
+      const c1 = Number(m[1]);
+      const c2 = Number(m[2]);
+      const j = Number(m[3]);
+      pivotCol = j;
+      operacao = "Troca de colunas";
+      linhas = `Colunas: C${c1 + 1} / C${c2 + 1}`;
+      resumo = `Resumo: C${c1 + 1} ↔ C${c2 + 1} (pivô na coluna ${j + 1})`;
+      activeCol = j;
+    }
+  }
+
+  // --- Combinação linear de linhas para reduzir entrada em (rR, cC) ---
+  if (!operacao) {
+    m = description.match(
+      /Combinação linear de linhas para reduzir a entrada em \(r(\d+), c(\d+)\)/
+    );
+    if (m) {
+      const r = Number(m[1]);
+      const c = Number(m[2]);
+      pivotRow = r;
+      pivotCol = c;
+      operacao = "Soma (eliminação por linha)";
+      linhas = `Linhas: envolve R${r + 1} e uma linha pivô`;
+      resumo = `Resumo: combinação de linhas para reduzir a entrada em (${r + 1}, ${c + 1}).`;
+      blueRows = [r];        // linha sendo modificada (verde)
+      activeCol = c;         // coluna do pivô (azul)
+    }
+  }
+
+  // --- Combinação linear de colunas para reduzir entrada em (rR, cC) ---
+  if (!operacao) {
+    m = description.match(
+      /Combinação linear de colunas para reduzir a entrada em \(r(\d+), c(\d+)\)/
+    );
+    if (m) {
+      const r = Number(m[1]);
+      const c = Number(m[2]);
+      pivotRow = r;
+      pivotCol = c;
+      operacao = "Soma (eliminação por coluna)";
+      linhas = `Colunas: envolve C${c + 1} e uma coluna pivô`;
+      resumo = `Resumo: combinação de colunas para reduzir a entrada em (${r + 1}, ${c + 1}).`;
+      blueRows = [r];
+      activeCol = c;
+    }
+  }
+
+  // --- Multiplicação por -1 para tornar o pivô positivo ---
+  if (!operacao) {
+    m = description.match(
+      /Multiplicação por -1 para tornar o pivô em \(r(\d+), c(\d+)\) positivo/
+    );
+    if (m) {
+      const r = Number(m[1]);
+      const c = Number(m[2]);
+      pivotRow = r;
+      pivotCol = c;
+      operacao = "Multiplicação por -1 no pivô";
+      linhas = `Linhas: R${r + 1}`;
+      resumo = `Resumo: pivô em (${r + 1}, ${c + 1}) multiplicado por -1 para ficar positivo.`;
+      blueRows = [r];
+      activeCol = c;
+    }
+  }
+
+  // --- Zerando a entrada em (rR, cC) usando o pivô em (rI, cJ) ---
+  if (!operacao) {
+    m = description.match(
+      /Zerando a entrada em \(r(\d+), c(\d+)\) usando o pivô em \(r(\d+), c(\d+)\)/
+    );
+    if (m) {
+      const r1 = Number(m[1]);
+      const c1 = Number(m[2]);
+      const r2 = Number(m[3]);
+      const c2 = Number(m[4]);
+      pivotRow = r2;
+      pivotCol = c2;
+
+      if (r1 !== r2) {
+        // eliminação por LINHA
+        operacao = "Soma (eliminação por linha)";
+        linhas = `Linhas: R${r1 + 1} / R${r2 + 1}`;
+        resumo = `Resumo: zera a entrada em (${r1 + 1}, ${c1 + 1}) usando o pivô em (${r2 + 1}, ${c2 + 1}).`;
+        blueRows = [r1];       // linha alterada (verde)
+        redRows = [r2];        // linha pivô (vermelho)
+        activeCol = c1;
+      } else {
+        // eliminação por COLUNA
+        operacao = "Soma (eliminação por coluna)";
+        linhas = `Colunas: C${c1 + 1} / C${c2 + 1}`;
+        resumo = `Resumo: zera a entrada em (${r1 + 1}, ${c1 + 1}) usando o pivô em (${r2 + 1}, ${c2 + 1}).`;
+        blueRows = [r1];
+        activeCol = c1;
+      }
+    }
+  }
+
+  // --- Casos finais genéricos ---
+  if (!operacao) {
+    if (/Matriz quase-diagonal obtida/.test(description)) {
+      operacao = "SNF final obtida";
+      resumo = `Resumo: ${description}`;
+    } else if (/Matriz vazia/.test(description)) {
+      operacao = "Matriz vazia";
+      resumo = `Resumo: ${description}`;
+    } else {
+      operacao = description;
+      resumo = `Resumo: ${description}`;
+    }
+  }
+
+  return {
+    pivotRow,
+    pivotCol,
+    operacao,
+    linhas,
+    resumo,
+    blueRows,
+    redRows,
+    activeCol,
+  };
+}
+
+function formatSnfOp(description: string): string {
+  const info = parseSnfStepInfo(description);
+
+  const pivotLine = `Pivot: (${info.pivotRow !== null ? info.pivotRow + 1 : "–"}, ${
+    info.pivotCol !== null ? info.pivotCol + 1 : "–"
+  })`;
+
+  return [
+    pivotLine,
+    `Operação: ${info.operacao}`,
+    info.linhas,
+    info.resumo,
+  ].join("\n");
+}
+
+
+
   // ----------------- JSX -----------------
 return (
   <div className="min-h-screen bg-gray-100">
@@ -2290,9 +2711,9 @@ return (
         Percorra as etapas: <b>triangulação</b> → <b>cadeias</b> → <b>matrizes de fronteira</b> → <b>postos</b> → <b>RREF</b> (ℚ) → <b>SNF</b> (ℤ) → <b>homologia</b>.
       </p>
 
-      {/* TOP CONTROLS */}
+      {/* CONTROLES SUPERIORES */}
       <div className="grid md:grid-cols-3 gap-4 mb-6">
-        {/* Space / m,n / rp2 toggle */}
+        {/* Espaço / m,n / alternância rp2 */}
         <div className="p-4 rounded-2xl shadow bg-white">
           <label className="text-sm text-gray-700">Space</label>
           <select
@@ -2342,7 +2763,7 @@ return (
           )}
         </div>
 
-        {/* Pipeline buttons */}
+        {/* Botões do pipeline */}
         <div className="p-4 rounded-2xl shadow bg-white flex flex-col gap-2">
           <button
             onClick={go1_triangulate}
@@ -2394,7 +2815,7 @@ return (
           </button>
         </div>
 
-        {/* Log + tests */}
+        {/* Log + testes */}
         <div className="p-4 rounded-2xl shadow bg-white text-sm">
           <div className="font-semibold mb-1">Log</div>
           <div className="h-40 overflow-auto border rounded-lg p-2 bg-gray-50">
@@ -2415,7 +2836,7 @@ return (
         </div>
       </div>
 
-      {/* TRIANGLES PREVIEW AND SVG - ALWAYS TOGETHER */}
+      {/* PRÉVIA DOS TRIÂNGULOS E SVG - SEMPRE JUNTOS */}
       <div className="grid md:grid-cols-2 gap-4 mb-4">
         <Section title="Triangles preview (first 40)">
           {trianglesPreview.length === 0 ? (
@@ -2440,6 +2861,7 @@ return (
                 faces={faces as number[][]}
                 selectedSimplex={selectedSimplex}
                 rp2Decomp={rp2Decomp}
+                highlightEdges={space === "rp2" ? rp2HighlightedEdges : []}
               />
               <div className="text-xs text-gray-900 mt-2">
                 <strong>💡 Dica:</strong> Clique nos simplexes nas seções abaixo para destacá-los aqui!
@@ -2452,42 +2874,44 @@ return (
           )}
       </div>
 
-      {/* CHAINS - Can be pinned with SVG */}
+      {/* CADEIAS - Pode ser fixado com SVG */}
       {chainsWithSVG ? (
         <div className="grid md:grid-cols-2 gap-4 mb-4">
-                    <Section 
+                   <Section 
             title="Chains (simplices grouped by dimension)"
             withSVGToggle
             isWithSVG={chainsWithSVG}
             onToggleWithSVG={setChainsWithSVG}
           >
-            <ChainsView
-              by={by}
-              selected={selectedSimplex}
-              onSelect={setSelectedSimplex}
-            />
+            <div className="max-h-[500px] overflow-auto">
+              <ChainsView
+                by={by}
+                selected={selectedSimplex}
+                onSelect={setSelectedSimplex}
+              />
+            </div>
 
-            {space === "rp2" && (
+            {/* Botão para mostrar pares colados na RP² */}
+            {space === "rp2" && faces.length > 0 && (
               <div className="mt-3 text-xs text-gray-700 flex items-center gap-2">
                 <button
                   type="button"
                   onClick={cycleRp2Pair}
                   className="px-2 py-1 rounded bg-red-600 text-white text-[11px] hover:bg-red-700"
                 >
-                  {rp2PairIndex < 0
-                    ? "Show glued edge pair"
-                    : "Next glued edge pair"}
+                {rp2PairIndex < 0 ? "Mostrar par colado" : "Próximo par colado"}
                 </button>
                 <span>
                   {rp2PairIndex < 0
-                    ? "No pair highlighted"
-                    : `Current pair: ${
-                        rp2PairLabels[rp2PairIndex] ?? `#${rp2PairIndex + 1}`
-                      }`}
+                  ? "Nenhum par destacado"
+                  : `Par atual: ${
+                      rp2PairLabels[rp2PairIndex] ?? `#${rp2PairIndex + 1}`
+                    }`}
                 </span>
               </div>
             )}
           </Section>
+
 
 
           <div className="flex flex-col justify-center">
@@ -2500,6 +2924,7 @@ return (
                   faces={faces as number[][]}
                   selectedSimplex={selectedSimplex}
                   rp2Decomp={rp2Decomp}
+                  highlightEdges={space === "rp2" ? rp2HighlightedEdges : []}
                 />
                 <div className="text-xs text-gray-900 mt-2">
                   <strong>💡 Dica:</strong> Clique nos simplexes para destacá-los!
@@ -2512,7 +2937,7 @@ return (
             )}
           </div>
         </div>
-            ) : (
+                 ) : (
         <Section
           title="Chains (simplices grouped by dimension)"
           withSVGToggle
@@ -2549,10 +2974,10 @@ return (
       )}
 
 
-    {/* d2 - Can be pinned with SVG */}
+    {/* d2 - Pode ser fixado com SVG */}
     {d2WithSVG ? (
       <div className="grid md:grid-cols-2 gap-4 mb-4 items-stretch">
-        {/* LEFT: d2 matrix */}
+        {/* ESQUERDA: matriz d2 */}
         <Section
           title="d2 : C2 → C1 (raw)"
           withSVGToggle
@@ -2568,10 +2993,10 @@ return (
                 caption="Rows: edges, Cols: triangles"
                 activeCol={activeD2Col}
                 onColClick={(col, j) => {
-                  // toggle: if you click the same column again, turn it off
+                  // alternar: se clicar na mesma coluna novamente, desmarca
                   setActiveD2Col((prev) => {
                     const next = prev === j ? null : j;
-                    setSelectedSimplex(next === null ? null : col); // update SVG
+                    setSelectedSimplex(next === null ? null : col); // atualiza o SVG
                     return next;
                   });
                 }}
@@ -2588,9 +3013,9 @@ return (
                       const next = Math.min(v + 1, totalColsD2);
                       const colIndex = next - 1;
                       if (colIndex >= 0 && colIndex < d2.cols.length) {
-                        const tri = d2.cols[colIndex];      // e.g. [0,3,4]
-                        setActiveD2Col(colIndex);          // highlight this column in matrix
-                        setSelectedSimplex(tri);           // highlight triangle on SVG
+                        const tri = d2.cols[colIndex];      // ex.: [0,3,4]
+                        setActiveD2Col(colIndex);          // destaca esta coluna na matriz
+                        setSelectedSimplex(tri);           // destaca o triângulo no SVG
                       }
                       return next;
                     });
@@ -2613,16 +3038,16 @@ return (
                 >
                   Show all
                 </button>
-                {/* Help button */}
+                {/* Botão de ajuda */}
                 <button
                   className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50"
                   onClick={() =>
                     setD2ShowHelp((open) => {
                       const next = !open;
-                      // When opening Help, select the FIRST column as the example
+                      // Ao abrir a Ajuda, seleciona a PRIMEIRA coluna como exemplo
                       if (!open && d2 && d2.cols.length > 0) {
                         setActiveD2Col(0);
-                        setSelectedSimplex(d2.cols[0]); // highlight that triangle on the SVG
+                        setSelectedSimplex(d2.cols[0]); // destaca esse triângulo no SVG
                       }
                       return next;
                     })
@@ -2633,8 +3058,8 @@ return (
               </div>
               {d2ShowHelp && d2 && d2.cols.length > 0 && (
               (() => {
-                const j = 0; // first column as the example
-                const tri = d2.cols[j]; // e.g. [0,3,4]
+                const j = 0; // primeira coluna como exemplo
+                const tri = d2.cols[j]; // ex.: [0,3,4]
 
                 const terms = d2.rows
                   .map((edge, i) => {
@@ -2656,7 +3081,7 @@ return (
             {`∂₂([v₀, v₁, v₂]) = [v₁, v₂] − [v₀, v₂] + [v₀, v₁].`}
                     </pre>
 
-                    {/* Example built from the FIRST column of the matrix */}
+                    {/* Exemplo construído a partir da PRIMEIRA coluna da matriz */}
                     <div className="mt-2 font-semibold">
                       Example (first column of ∂₂)
                     </div>
@@ -2705,7 +3130,7 @@ return (
           )}
         </Section>
 
-        {/* RIGHT: SVG */}
+        {/* DIREITA: SVG */}
           {faces.length ? (
             <div className="w-full">
               <TriangulationView
@@ -2715,7 +3140,7 @@ return (
                 faces={faces as number[][]}
                 selectedSimplex={selectedSimplex}
                 rp2Decomp={rp2Decomp}
-                
+                highlightEdges={space === "rp2" ? rp2HighlightedEdges : []}
               />
             </div>
           ) : (
@@ -2725,7 +3150,7 @@ return (
           )}
       </div>
     ) : (
-      /* the non-pinned version, below */
+      /* versão sem SVG fixo, abaixo */
       <Section
         title="d2 : C2 → C1 (raw)"
         withSVGToggle
@@ -2741,10 +3166,10 @@ return (
               caption="Rows: edges, Cols: triangles"
               activeCol={activeD2Col}
               onColClick={(col, j) => {
-                // toggle: if you click the same column again, turn it off
+                // alternar: se clicar na mesma coluna novamente, desmarca
                 setActiveD2Col((prev) => {
                   const next = prev === j ? null : j;
-                  setSelectedSimplex(next === null ? null : col); // update SVG
+                  setSelectedSimplex(next === null ? null : col); // atualiza o SVG
                   return next;
                 });
               }}
@@ -2761,9 +3186,9 @@ return (
                     const next = Math.min(v + 1, totalColsD2);
                     const colIndex = next - 1;
                     if (colIndex >= 0 && colIndex < d2.cols.length) {
-                      const tri = d2.cols[colIndex];      // e.g. [0,3,4]
-                      setActiveD2Col(colIndex);          // highlight this column in matrix
-                      setSelectedSimplex(tri);           // highlight triangle on SVG
+                      const tri = d2.cols[colIndex];      // ex.: [0,3,4]
+                      setActiveD2Col(colIndex);          // destaca esta coluna na matriz
+                      setSelectedSimplex(tri);           // destaca o triângulo no SVG
                     }
                     return next;
                   });
@@ -2791,10 +3216,10 @@ return (
               onClick={() =>
                 setD2ShowHelp((open) => {
                   const next = !open;
-                  // When opening Help, select the FIRST column as the example
+                  // Ao abrir a Ajuda, seleciona a PRIMEIRA coluna como exemplo
                   if (!open && d2 && d2.cols.length > 0) {
                     setActiveD2Col(0);
-                    setSelectedSimplex(d2.cols[0]); // highlight that triangle on the SVG
+                    setSelectedSimplex(d2.cols[0]); // destaca esse triângulo no SVG
                   }
                   return next;
                 })
@@ -2806,8 +3231,8 @@ return (
 
             {d2ShowHelp && d2 && d2.cols.length > 0 && (
             (() => {
-              const j = 0; // first column as the example
-              const tri = d2.cols[j]; // e.g. [0,3,4]
+              const j = 0; // primeira coluna como exemplo
+              const tri = d2.cols[j]; // ex.: [0,3,4]
 
               const terms = d2.rows
                 .map((edge, i) => {
@@ -2829,7 +3254,7 @@ return (
           {`∂₂([v₀, v₁, v₂]) = [v₁, v₂] − [v₀, v₂] + [v₀, v₁].`}
                   </pre>
 
-                  {/* Example built from the FIRST column of the matrix */}
+                  {/* Exemplo construído a partir da PRIMEIRA coluna da matriz */}
                   <div className="mt-2 font-semibold">
                     Example (first column of ∂₂)
                   </div>
@@ -2880,10 +3305,10 @@ return (
     )}
 
 
-      {/* d1 - Can be pinned with SVG */}
+      {/* d1 - Pode ser fixado com SVG */}
       {d1WithSVG ? (
       <div className="grid md:grid-cols-2 gap-4 mb-4 items-stretch">
-        {/* LEFT: d1 matrix */}
+        {/* ESQUERDA: matriz d1 */}
         <Section
           title="d1 : C1 → C0 (raw)"
           withSVGToggle
@@ -2899,7 +3324,7 @@ return (
                 caption="Rows: vertices, Cols: edges"
                 activeCol={activeD1Col}
                 onColClick={(col, j) => {
-                  // same toggle behavior as d₂
+                  // mesmo comportamento de alternância que em d₂
                   setActiveD1Col((prev) => {
                     const next = prev === j ? null : j;
                     setSelectedSimplex(next === null ? null : col);
@@ -2919,9 +3344,9 @@ return (
                       const next = Math.min(v + 1, totalColsD1);
                       const colIndex = next - 1;
                       if (colIndex >= 0 && colIndex < d1.cols.length) {
-                        const edge = d1.cols[colIndex];   // e.g. [0, 3]
-                        setActiveD1Col(colIndex);         // highlight this column in matrix
-                        setSelectedSimplex(edge);         // highlight the edge on the SVG
+                        const edge = d1.cols[colIndex];   // ex.: [0, 3]
+                        setActiveD1Col(colIndex);         // destaca esta coluna na matriz
+                        setSelectedSimplex(edge);         // destaca a aresta no SVG
                       }
                       return next;
                     });
@@ -2945,16 +3370,16 @@ return (
                 >
                   Show all
                 </button>
-                {/* Help button */}
+                {/* Botão de ajuda */}
                 <button
                 className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50"
                 onClick={() =>
                   setD1ShowHelp((open) => {
                     const next = !open;
-                    // when opening Help, select the FIRST column as example (like d₂)
+                    // ao abrir Ajuda, seleciona a PRIMEIRA coluna como exemplo (como em d₂)
                     if (!open && d1 && d1.cols.length > 0) {
                       setActiveD1Col(0);
-                      setSelectedSimplex(d1.cols[0]); // highlight that edge on the SVG
+                      setSelectedSimplex(d1.cols[0]); // destaca essa aresta no SVG
                     }
                     return next;
                   })
@@ -2965,8 +3390,8 @@ return (
               </div>
 
               {d1ShowHelp && d1 && d1.cols.length > 0 && (() => {
-                const j = 0;                 // first column as example
-                const edge = d1.cols[j];     // e.g. [v0, v1]
+                const j = 0;                 // primeira coluna como exemplo
+                const edge = d1.cols[j];     // ex.: [v0, v1]
 
                 const terms = d1.rows
                   .map((vertex, i) => {
@@ -3039,7 +3464,7 @@ return (
           )}
         </Section>
 
-        {/* RIGHT: SVG */}
+        {/* DIREITA: SVG */}
           {faces.length ? (
             <div className="w-full">
               <TriangulationView
@@ -3049,6 +3474,7 @@ return (
                 faces={faces as number[][]}
                 selectedSimplex={selectedSimplex}
                 rp2Decomp={rp2Decomp}
+                highlightEdges={space === "rp2" ? rp2HighlightedEdges : []}
               />
             </div>
           ) : (
@@ -3092,9 +3518,9 @@ return (
                     const next = Math.min(v + 1, totalColsD1);
                     const colIndex = next - 1;
                     if (colIndex >= 0 && colIndex < d1.cols.length) {
-                      const edge = d1.cols[colIndex];   // e.g. [0, 3]
-                      setActiveD1Col(colIndex);         // highlight this column in matrix
-                      setSelectedSimplex(edge);         // highlight the edge on the SVG
+                      const edge = d1.cols[colIndex];   // ex.: [0, 3]
+                      setActiveD1Col(colIndex);         // destaca esta coluna na matriz
+                      setSelectedSimplex(edge);         // destaca a aresta no SVG
                     }
                     return next;
                   });
@@ -3148,7 +3574,7 @@ return (
 
 
   <Section title="RREF(d2) over Q">
-    {/* Controls for step-by-step RREF(d2) */}
+    {/* Controles para o RREF(d2) passo a passo */}
     <div className="flex flex-wrap gap-2 mb-2">
       <button
         className="px-3 py-1 rounded bg-blue-600 text-white text-xs hover:bg-blue-700 disabled:opacity-50"
@@ -3182,7 +3608,7 @@ return (
         Finish all steps
       </button>
 
-      {/* NEW: toggle rank popup */}
+      {/* NOVO: alternar o pop-up do posto */}
       <button
         className="px-3 py-1 rounded border text-xs hover:bg-blue-50 disabled:opacity-40"
         onClick={() => setShowRankD2((v) => !v)}
@@ -3192,7 +3618,7 @@ return (
       </button>
     </div>
 
-    {/* TEXT ABOVE MATRIX (same layout as d1) */}
+    {/* TEXTO ACIMA DA MATRIZ (mesmo layout de d1) */}
     <div className="mb-3 text-xs text-gray-700 leading-snug space-y-1">
       <div className="font-semibold">Operação atual em ∂₂</div>
       {d2OpText ? (
@@ -3208,7 +3634,7 @@ return (
       )}
     </div>
 
-    {/* RANK POPUP – only when button is active */}
+    {/* POP-UP DO POSTO – apenas quando o botão está ativo */}
     {showRankD2 && (
       <div className="mb-3 text-xs text-gray-800 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2">
         <div className="font-semibold">Rank(∂₂) over ℚ</div>
@@ -3224,7 +3650,7 @@ return (
       </div>
     )}
 
-    {/* MATRIX BELOW TEXT */}
+    {/* MATRIZ ABAIXO DO TEXTO */}
     <div className="overflow-x-auto">
       {d2StepMatrix ? (
         <MatrixViewFrac
@@ -3254,7 +3680,7 @@ return (
 
 
     <Section title="RREF(d1) over Q">
-    {/* Controls for step-by-step RREF(d1) */}
+    {/* Controles para o RREF(d1) passo a passo */}
     <div className="flex flex-wrap gap-2 mb-2">
       <button
         className="px-3 py-1 rounded bg-blue-600 text-white text-xs hover:bg-blue-700 disabled:opacity-50"
@@ -3288,7 +3714,7 @@ return (
         Finish all steps
       </button>
 
-      {/* NEW: toggle rank popup */}
+      {/* NOVO: alternar o pop-up do posto */}
       <button
         className="px-3 py-1 rounded border text-xs hover:bg-blue-50 disabled:opacity-40"
         onClick={() => setShowRankD1((v) => !v)}
@@ -3298,7 +3724,7 @@ return (
       </button>
     </div>
 
-    {/* TEXT EXPLANATION ABOVE THE MATRIX */}
+    {/* EXPLICAÇÃO EM TEXTO ACIMA DA MATRIZ */}
     <div className="mb-3 text-xs text-gray-700 leading-snug space-y-1">
       <div className="font-semibold">Operação atual em ∂₁</div>
       {d1OpText ? (
@@ -3314,7 +3740,7 @@ return (
       )}
     </div>
 
-    {/* RANK POPUP – only when button is active */}
+    {/* POP-UP DO POSTO – apenas quando o botão está ativo */}
     {showRankD1 && (
       <div className="mb-3 text-xs text-gray-800 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2">
         <div className="font-semibold">Rank(∂₁) over ℚ</div>
@@ -3330,7 +3756,7 @@ return (
       </div>
     )}
 
-    {/* MATRIX BELOW THE TEXT */}
+    {/* MATRIZ ABAIXO DO TEXTO */}
     <div className="overflow-x-auto">
       {d1StepMatrix ? (
         <MatrixViewFrac
@@ -3358,8 +3784,188 @@ return (
     </div>
   </Section>
 
+        {/* FORMA NORMAL DE SMITH (∂₂ sobre ℤ) */}
+    {/* FORMA NORMAL DE SMITH (∂₂ sobre ℤ) */}
+    <Section title="Forma Normal de Smith (∂₂ sobre ℤ)">
+      {/* Controles da SNF passo a passo */}
+      <div className="flex flex-wrap gap-2 mb-2">
+        <button
+          className="px-3 py-1 rounded bg-blue-600 text-white text-xs hover:bg-blue-700 disabled:opacity-50"
+          onClick={() => {
+            if (!d2) {
+              log("Por favor, construa as matrizes de bordo primeiro (∂₂).");
+              return;
+            }
+            // recalcula SNF(∂₂) e volta para o primeiro passo
+            go6_snf();
+            setShowSnfDiag(false);
+          }}
+          disabled={!d2}
+        >
+          Iniciar / Reset SNF(∂₂)
+        </button>
 
-    {/* HOMOLOGY SUMMARY */}
+        <button
+          className="px-3 py-1 rounded border text-xs hover:bg-gray-100 disabled:opacity-50"
+          onClick={() => {
+            if (!snfSteps || snfSteps.length === 0) return;
+            setSnfStepIndex((i) => Math.max(0, i - 1));
+          }}
+          disabled={!snfSteps || snfSteps.length === 0 || snfStepIndex <= 0}
+        >
+          Voltar um passo
+        </button>
+
+        <button
+          className="px-3 py-1 rounded bg-emerald-600 text-white text-xs hover:bg-emerald-700 disabled:opacity-40"
+          onClick={() => {
+            if (!snfSteps || snfSteps.length === 0) return;
+            setSnfStepIndex((i) =>
+              Math.min(i + 1, snfSteps.length - 1)
+            );
+          }}
+          disabled={
+            !snfSteps ||
+            snfSteps.length === 0 ||
+            snfStepIndex >= (snfSteps?.length ?? 1) - 1
+          }
+        >
+          Próximo passo
+        </button>
+
+        <button
+          className="px-3 py-1 rounded bg-gray-700 text-white text-xs hover:bg-gray-800 disabled:opacity-40"
+          onClick={() => {
+            if (!snfSteps || snfSteps.length === 0) return;
+            setSnfStepIndex(snfSteps.length - 1);
+          }}
+          disabled={
+            !snfSteps ||
+            snfSteps.length === 0 ||
+            snfStepIndex >= (snfSteps?.length ?? 1) - 1
+          }
+        >
+          Finalizar todos os passos
+        </button>
+
+        {/* Botão para mostrar / esconder a diagonal (como o rank) */}
+        <button
+          className="px-3 py-1 rounded border text-xs hover:bg-blue-50 disabled:opacity-40"
+          onClick={() => setShowSnfDiag((v) => !v)}
+          disabled={!snfDiag || snfDiag.length === 0}
+        >
+          {showSnfDiag
+            ? "Esconder diagonal SNF(∂₂)"
+            : "Mostrar diagonal SNF(∂₂)"}
+        </button>
+      </div>
+
+      {/* Texto da operação atual – mesmo formato do RREF(d₂) */}
+      <div className="mb-3 text-xs text-gray-700 leading-snug space-y-1">
+        <div className="font-semibold">Operação atual na SNF(∂₂)</div>
+        {snfSteps && snfSteps.length > 0 ? (
+          (() => {
+            const step = snfSteps[snfStepIndex];
+            const text = formatSnfOp(step.description); // usa o mesmo padrão Pivot/Operação/Linhas/Resumo
+            return (
+              <pre className="bg-gray-50 rounded-xl border px-2 py-2 whitespace-pre-wrap">
+                {text}
+              </pre>
+            );
+          })()
+        ) : (
+          <p>
+            Use <span className="font-semibold">"Próximo passo"</span> para
+            ver as operações da SNF(∂₂) passo a passo.
+          </p>
+        )}
+      </div>
+
+      {/* Pop-up da diagonal – só aparece quando o botão está ligado */}
+      {showSnfDiag && snfDiag && snfDiag.length > 0 && (
+        <div className="mb-3 text-xs text-gray-800 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2">
+          <div className="font-semibold">Diagonal da SNF de ∂₂</div>
+          <div className="mt-1">
+            diag(∂₂) = [
+            {snfDiag.map((d, idx) =>
+              (idx === 0 ? "" : ", ") + d.toString()
+            )}
+            ]
+          </div>
+          {(() => {
+            const torsion = snfDiag
+              .filter((x) => x !== 0n && x !== 1n && x !== -1n)
+              .map((x) => (x < 0n ? -x : x));
+
+            if (torsion.length === 0) {
+              return (
+                <div className="mt-1 text-gray-700">
+                  Não aparecem fatores de torção (&gt; 1) na diagonal de ∂₂.
+                </div>
+              );
+            }
+
+            return (
+              <div className="mt-1 text-gray-700">
+                Fatores de torção (d &gt; 1) vindos da SNF de ∂₂:{" "}
+                {torsion.map((t, idx) =>
+                  (idx === 0 ? "" : ", ") + t.toString()
+                )}
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* Matriz da SNF, com mesmo esquema de cores do RREF(d₂) */}
+      <div className="overflow-x-auto">
+        {snfSteps && snfSteps.length > 0 ? (
+          (() => {
+            const step = snfSteps[snfStepIndex];
+            const A = step.matrix;
+            const Mfrac = A.map((row) => row.map((x) => Frac.from(x)));
+
+            const info = parseSnfStepInfo(step.description); // azul / verde / vermelho
+            const snfDone = snfStepIndex === snfSteps.length - 1;
+
+            // pivôs finais: diagonal não-nula no ÚLTIMO passo
+            const pivotCells = snfDone
+              ? (() => {
+                  const mRows = A.length;
+                  const nCols = mRows ? A[0].length : 0;
+                  const s = Math.min(mRows, nCols);
+                  const out: { row: number; col: number }[] = [];
+                  for (let k = 0; k < s; k++) {
+                    if (A[k][k] !== 0n) out.push({ row: k, col: k });
+                  }
+                  return out;
+                })()
+              : [];
+
+            return (
+              <MatrixViewFrac
+                M={Mfrac}
+                rows={d2!.rows}
+                cols={d2!.cols}
+                caption={`Passo ${snfStepIndex + 1} / ${snfSteps.length} da SNF(∂₂)`}
+                activeCol={snfDone ? null : info.activeCol}
+                blueRows={snfDone ? [] : info.blueRows}
+                redRows={snfDone ? [] : info.redRows}
+                pivotCells={pivotCells}
+              />
+            );
+          })()
+        ) : (
+          <div className="text-sm text-gray-600">
+            (clique em "Iniciar / Reset SNF(∂₂)" para ver a SNF passo a passo)
+          </div>
+        )}
+      </div>
+    </Section>
+
+
+
+    {/* RESUMO DE HOMOLOGIA */}
     <Section title="Homology (Z & R)">
       {summary.length === 0 ? (
         <div className="text-sm text-gray-600">
@@ -3367,7 +3973,7 @@ return (
         </div>
       ) : (
         <div className="space-y-4 text-sm">
-          {/* Button to toggle the explanation */}
+          {/* Botão para mostrar/ocultar a explicação */}
           <div className="flex justify-end">
             <button
               className="px-3 py-1 rounded-full border text-xs bg-white hover:bg-amber-50 text-amber-900 border-amber-300"
@@ -3379,7 +3985,7 @@ return (
             </button>
           </div>
 
-          {/* Explicação em português, com LaTeX (only if button is ON) */}
+          {/* Explicação em português, com LaTeX (só se o botão estiver ligado) */}
           {showHomologyDetails && (
             <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-[12px] leading-snug">
               <div className="font-semibold text-amber-900 mb-1">
