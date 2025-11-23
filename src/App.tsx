@@ -1,1554 +1,45 @@
 import React, { useMemo, useState, useEffect } from "react";
 import "katex/dist/katex.min.css";
 import { InlineMath } from "react-katex";
+import { DiskAntDemo } from "./components/DiskAntDemo";
+
+import { MobiusAntDemo  } from "./components/MobiusAntDemo";
+
+import { MatrixView, MatrixViewFrac, MatrixViewFracProps } from "./components/MatrixView";
+import { ChainsView } from "./components/ChainsView";
+import { Section } from "./components/Section";
+import { TriangulationView,  } from "./components/TriangulationView";
+
+import { sanitizeForJsxText } from "./utils/sanitize"; 
+
+// e os módulos de matemática:
+import { Frac } from "./math/frac";
+import {
+  rrefOverQ,
+  rankOverQ,
+  smithNormalFormZWithSteps,
+  snfDiagonal,
+  SnfSnapshot,
+  D2RowOp,
+  findNextD2Op,
+  computePivotsFromFracMatrix,
+  formatD2Op,
+  formatSnfOp,
+  D2RrefSnapshot,
+  parseSnfStepInfo,
+  SnfStepInfo,
+} from "./math/linearAlgebra";
+import {
+  buildComplex,
+  orientedFaces,
+  groupByDim,
+  boundaryMatrix,
+  bettiAndTorsion,
+  simplicesCycle3,
+  simplicesFilledTriangle,
+  summarizeHomology,
+} from "./math/homology";
 
-// ======================================================
-// CLASS Frac — representa frações exatas sobre Q usando BigInt
-// ======================================================
-//
-// - Usa BigInt para não perder precisão nas contas da RREF (sobre ℚ).
-// - Normaliza automaticamente o sinal e divide pelo mdc.
-// - Fornece operações básicas: add, sub, mul, div, neg, isZero.
-// - Usada em toda a parte de RREF(d_k) sobre os racionais.
-//
-// Em resumo: é a implementação de aritmética exata em ℚ,
-// necessária para reduzir as matrizes de fronteira sobre Q.
-class Frac {
-  num: bigint;
-  den: bigint;
-  constructor(num: bigint | number = 0n, den: bigint | number = 1n) {
-    let N = typeof num === "number" ? BigInt(num) : (num as bigint);
-    let D = typeof den === "number" ? BigInt(den) : (den as bigint);
-    if (D === 0n) throw new Error("Denominador zero");
-    if (D < 0n) { N = -N; D = -D; }
-    const g = Frac._gcd(Frac._abs(N), D);
-    this.num = N / g;
-    this.den = D / g;
-  }
-  static from(x: Frac | number | bigint) { return x instanceof Frac ? x : new Frac(x, 1n); }
-  static zero() { return new Frac(0n,1n); }
-  static one()  { return new Frac(1n,1n); }
-  static _abs(a: bigint){ return a < 0n ? -a : a; }
-  static _gcd(a: bigint, b: bigint){ a=Frac._abs(a); b=Frac._abs(b); while(b!==0n){ const t=a%b; a=b; b=t; } return a; }
-  add(b: Frac | number | bigint){ const B=Frac.from(b); return new Frac(this.num*B.den + B.num*this.den, this.den*B.den); }
-  sub(b: Frac | number | bigint){ const B=Frac.from(b); return new Frac(this.num*B.den - B.num*this.den, this.den*B.den); }
-  mul(b: Frac | number | bigint){ const B=Frac.from(b); return new Frac(this.num*B.num, this.den*B.den); }
-  div(b: Frac | number | bigint){ const B=Frac.from(b); if (B.num===0n) throw new Error("/0"); return new Frac(this.num*B.den, this.den*B.num); }
-  neg(){ return new Frac(-this.num, this.den); }
-  isZero(){ return this.num===0n; }
-  toString(){ return this.den===1n ? this.num.toString() : `${this.num}/${this.den}`; }
-}
-
-// ======================================================
-// rrefOverQ(mat)
-// ======================================================
-//
-// - Converte a matriz de BigInt para matriz de Fractions (Frac).
-// - Aplica eliminação de Gauss-Jordan completa.
-// - Retorna:
-//
-//      R: matriz em forma reduzida (RREF)
-//      pivots: lista de posições dos pivôs (linha/coluna)
-//
-// - Usado para calcular rank(d_k) e rank(d_{k+1}) sobre Q.
-//
-// rankOverQ(mat):
-//     -- usa rrefOverQ e conta quantas linhas não são zero.
-//     -- dá o posto da fronteira (imagem ∂_k).
-//
-function rrefOverQ(mat: bigint[][]){
-  const A: Frac[][] = mat.map(row => row.map(x=> new Frac(x, 1n)));
-  const m = A.length; const n = m ? A[0].length : 0;
-  let r=0, c=0; const pivots: {row:number,col:number}[] = [];
-  while(r<m && c<n){
-    let piv=r; while(piv<m && A[piv][c].isZero()) piv++;
-    if (piv===m){ c++; continue; }
-    if (piv!==r){ const tmp=A[r]; A[r]=A[piv]; A[piv]=tmp; }
-    const inv = new Frac(1n,1n).div(A[r][c]);
-    for(let j=c;j<n;j++) A[r][j]=A[r][j].mul(inv);
-    for(let i=0;i<m;i++) if(i!==r && !A[i][c].isZero()){
-      const factor=A[i][c];
-      for(let j=c;j<n;j++) A[i][j]=A[i][j].sub(factor.mul(A[r][j]));
-    }
-    pivots.push({row:r, col:c});
-    r++; c++;
-  }
-  return { R: A, pivots };
-}
-
-function rankOverQ(mat: bigint[][]){
-  const { R } = rrefOverQ(mat);
-  return R.reduce((acc,row)=> acc + (row.some(x=>!x.isZero())?1:0), 0);
-}
-
-// ======================================================
-// Smith Normal Form over Z (lightweight)
-// ======================================================
-// ======================================================
-// Smith Normal Form sobre ℤ (BigInt) + versão com passos
-// ======================================================
-function absBig(x: bigint) { return x < 0n ? -x : x; }
-function gcdBig(a: bigint, b: bigint) {
-  a = absBig(a);
-  b = absBig(b);
-  while (b !== 0n) {
-    const t = a % b;
-    a = b;
-    b = t;
-  }
-  return a;
-}
-
-// ======================================================
-// smithNormalFormZ(A)
-// ======================================================
-//
-// - Implementa o algoritmo básico para produzir SNF(A) usando:
-//     * trocas de linha/coluna (operações unimodulares)
-//     * combinações lineares (algoritmo de Euclides bidimensional)
-//
-// - Retorna a matriz “quase diagonal” cuja diagonal tem os fatores
-//   invariantes d1 | d2 | …
-// - Não retorna U e V (matrizes unimodulares), apenas o S.
-//
-// - É usada internamente por snfDiagonal para detectar torção.
-//
-
-function smithNormalFormZ(Ain: bigint[][]): bigint[][] {
-  const m = Ain.length;
-  const n = m ? Ain[0].length : 0;
-  const A: bigint[][] = Ain.map(row => row.map(x => BigInt(x)));
-
-  let i = 0, j = 0;
-  while (i < m && j < n) {
-    // 1) escolhe um pivô não nulo no bloco (i..m-1, j..n-1)
-    let pi = -1, pj = -1;
-    outer: for (let r = i; r < m; r++) {
-      for (let c = j; c < n; c++) {
-        if (A[r][c] !== 0n) {
-          pi = r; pj = c;
-          break outer;
-        }
-      }
-    }
-    if (pi === -1) break; // toda a parte restante é zero
-
-    // 2) traz o pivô para a posição (i,j) com trocas de linha/coluna
-    if (pi !== i) {
-      const tmp = A[i];
-      A[i] = A[pi];
-      A[pi] = tmp;
-    }
-    if (pj !== j) {
-      for (let r = 0; r < m; r++) {
-        const t = A[r][j];
-        A[r][j] = A[r][pj];
-        A[r][pj] = t;
-      }
-    }
-
-    // 3) usa o algoritmo de Euclides em linhas/colunas para tornar A[i][j]
-    //    um divisor "mínimo" das entradas na linha i e coluna j
-    let changed = true;
-    while (changed) {
-      changed = false;
-
-      // combinações lineares nas linhas (abaixo de i) para reduzir a coluna j
-      for (let r = i + 1; r < m; r++) if (A[r][j] !== 0n) {
-        const g = gcdBig(absBig(A[i][j]), absBig(A[r][j]));
-        const a = A[i][j] / g;
-        const b = A[r][j] / g;
-        for (let c = j; c < n; c++) {
-          A[r][c] = a * A[r][c] - b * A[i][c];
-        }
-        changed = true;
-      }
-
-      // combinações lineares nas colunas (à direita de j) para reduzir a linha i
-      for (let c = j + 1; c < n; c++) if (A[i][c] !== 0n) {
-        const g = gcdBig(absBig(A[i][j]), absBig(A[i][c]));
-        const a = A[i][j] / g;
-        const b = A[i][c] / g;
-        for (let r = 0; r < m; r++) {
-          A[r][c] = a * A[r][c] - b * A[r][j];
-        }
-        changed = true;
-      }
-
-      // normaliza o pivô para ser ≥ 0
-      if (A[i][j] < 0n) {
-        A[i][j] = -A[i][j];
-        changed = true;
-      }
-    }
-
-    // 4) zera o resto da coluna j
-    for (let r = 0; r < m; r++) if (r !== i && A[r][j] !== 0n) {
-      const q = A[r][j] / A[i][j];
-      for (let c = j; c < n; c++) {
-        A[r][c] -= q * A[i][c];
-      }
-    }
-
-    // 5) zera o resto da linha i
-    for (let c = 0; c < n; c++) if (c !== j && A[i][c] !== 0n) {
-      const q = A[i][c] / A[i][j];
-      for (let r = 0; r < m; r++) {
-        A[r][c] -= q * A[r][j];
-      }
-    }
-
-    i++; j++;
-  }
-
-  // A agora está em forma quase diagonal; a diagonal são os fatores invariantes
-  return A;
-}
-
-
-// ======================================================
-// snfDiagonal(A)
-// ======================================================
-// Extrai apenas a diagonal da forma normal de Smith, removendo zeros,
-// sendo usada para determinar fatores de torção:
-//
-//   H_k = Z^{beta_k} ⊕ ( ⨁ Z/d_i )
-//
-// onde os d_i obtidos aqui são os fatores de torção.
-//
-
-function snfDiagonal(A: bigint[][]): bigint[] {
-  const D = smithNormalFormZ(A);
-  const diag: bigint[] = [];
-  const s = Math.min(D.length, D[0]?.length || 0);
-  for (let k = 0; k < s; k++) diag.push(D[k][k]);
-  return diag;
-}
-
-// -------------------------------------------
-// Versão com passos para visualização da SNF
-// -------------------------------------------
-type SnfSnapshot = {
-  matrix: bigint[][];
-  description: string;
-};
-
-function cloneBigMatrix(A: bigint[][]): bigint[][] {
-  return A.map(row => row.slice());
-}
-
-// ======================================================
-// smithNormalFormZWithSteps(A)
-// ======================================================
-//
-// - Versão completa para visualização da SNF.
-// - Cada operação é gravada em "steps": descrição + matriz atual.
-// - Usado para a parte visual do app:
-//
-//      * mostrar cada operação
-//      * destacar colunas/linhas
-//      * explicar “Pivot / Operação / Linhas / Resumo”
-//
-// - O retorno é:
-//      D: matriz final em SNF
-//      steps: snapshots descrevendo cada transformação
-//
-
-function smithNormalFormZWithSteps(
-  Ain: bigint[][]
-): { D: bigint[][]; steps: SnfSnapshot[] } {
-  const m = Ain.length;
-  const n = m ? Ain[0].length : 0;
-  const A: bigint[][] = Ain.map(row => row.map(x => BigInt(x)));
-  const steps: SnfSnapshot[] = [];
-
-  const record = (description: string) => {
-    steps.push({ matrix: cloneBigMatrix(A), description });
-  };
-
-  if (m === 0 || n === 0) {
-    record("Matriz vazia (sem linhas ou colunas).");
-    return { D: A, steps };
-  }
-
-  record("Matriz inteira inicial para ∂₂ (d₂) sobre ℤ.");
-
-  let i = 0, j = 0;
-  while (i < m && j < n) {
-    // pivô não nulo no bloco (i,j)
-    let pi = -1, pj = -1;
-    outer: for (let r = i; r < m; r++) {
-      for (let c = j; c < n; c++) {
-        if (A[r][c] !== 0n) {
-          pi = r; pj = c;
-          break outer;
-        }
-      }
-    }
-    if (pi === -1) break;
-
-    if (pi !== i) {
-      const tmp = A[i]; A[i] = A[pi]; A[pi] = tmp;
-      record(`Troca de linhas r${i} e r${pi} para trazer um pivô diferente de zero.`);
-    }
-
-    if (pj !== j) {
-      for (let r = 0; r < m; r++) {
-        const t = A[r][j];
-        A[r][j] = A[r][pj];
-        A[r][pj] = t;
-      }
-      record(`Troca de colunas c${j} e c${pj} para posicionar o pivô na coluna j=${j}.`);
-    }
-
-    let changed = true;
-    while (changed) {
-      changed = false;
-
-      // linhas abaixo
-      for (let r = i + 1; r < m; r++) if (A[r][j] !== 0n) {
-        const g = gcdBig(absBig(A[i][j]), absBig(A[r][j]));
-        const a = A[i][j] / g;
-        const b = A[r][j] / g;
-        for (let c = j; c < n; c++) {
-          A[r][c] = a * A[r][c] - b * A[i][c];
-        }
-        record(
-          `Combinação linear nas linhas r${i} e r${r} para reduzir a entrada em (r${r}, c${j}).`
-        );
-        changed = true;
-      }
-
-      // colunas à direita
-      for (let c = j + 1; c < n; c++) if (A[i][c] !== 0n) {
-        const g = gcdBig(absBig(A[i][j]), absBig(A[i][c]));
-        const a = A[i][j] / g;
-        const b = A[i][c] / g;
-        for (let r = 0; r < m; r++) {
-          A[r][c] = a * A[r][c] - b * A[r][j];
-        }
-        record(
-          `Combinação linear nas colunas c${j} e c${c} para reduzir a entrada em (r${i}, c${c}).`
-        );
-        changed = true;
-      }
-
-      if (A[i][j] < 0n) {
-        A[i][j] = -A[i][j];
-        record(`Multiplicação da linha r${i} por -1 para tornar o pivô não negativo.`);
-        changed = true;
-      }
-    }
-
-    // zera coluna j fora do pivô
-    for (let r = 0; r < m; r++) if (r !== i && A[r][j] !== 0n) {
-      const q = A[r][j] / A[i][j];
-      for (let c = j; c < n; c++) {
-        A[r][c] -= q * A[i][c];
-      }
-      record(`Eliminação completa na coluna j=${j}: zera (r${r},c${j}) usando a linha r${i}.`);
-    }
-
-    // zera linha i fora do pivô
-    for (let c = 0; c < n; c++) if (c !== j && A[i][c] !== 0n) {
-      const q = A[i][c] / A[i][j];
-      for (let r = 0; r < m; r++) {
-        A[r][c] -= q * A[r][j];
-      }
-      record(`Eliminação completa na linha r=${i}: zera (r${i},c${c}) usando a coluna c${j}.`);
-    }
-
-    i++; j++;
-  }
-
-  record("Matriz em forma (quase) diagonal: a diagonal contém os fatores invariantes.");
-  return { D: A, steps };
-}
-
-
-// Que tipo de operação está sendo feita na SNF
-type SnfOpKind =
-  | "init-pivot"   // começando a trabalhar num pivot (r,c)
-  | "row-add"      // R_i <- R_i + k R_j
-  | "row-swap"     // troca de linhas
-  | "row-mul"      // R_i <- k R_i  (k = ±1)
-  | "col-add"      // C_i <- C_i + k C_j
-  | "col-swap"     // troca de colunas
-  | "col-mul"      // C_i <- k C_i (k = ±1)
-  | "pivot-done"   // terminou de limpar em torno do pivot
-  | "done";        // SNF completa
-
-export interface SnfOpDescription {
-  kind: SnfOpKind;
-
-  // pivot em que estamos focados (se fizer sentido)
-  pivotRow?: number;
-  pivotCol?: number;
-
-  // linhas/colunas envolvidas
-  srcRow?: number;
-  dstRow?: number;
-  srcCol?: number;
-  dstCol?: number;
-
-  // fator usado na combinação linear (pode ser negativo)
-  k?: bigint | number;
-}
-
-
-// ======================================================
-// wrapTorus / wrapKlein
-// ======================================================
-//
-// - Funções auxiliares para identificar vértices na malha m×n:
-//     wrapTorus implementa as duas colagens paralelas (superior/inferior e esquerda/direita)
-//     wrapKlein implementa colagem toral em uma direção e colagem invertida na outra.
-//
-// - Permitem produzir triangulações periódicas.
-//
-// Usadas por triangulatedFaces(m,n,wrap).
-
-function wrapTorus(i:number,j:number,m:number,n:number){ return [(i%m+m)%m, (j%n+n)%n] as const; }
-function wrapKlein(i:number,j:number,m:number,n:number){
-  if (i>=m){ i=i-m; j = (-j)%n; } else if (i<0){ i=i+m; j = (-j)%n; }
-  j = (j%n+n)%n; return [i,j] as const;
-}
-
-
-// ======================================================
-// triangulatedFaces(m,n,wrap)
-// ======================================================
-//
-// - Para cada célula quadrada da malha m×n, cria dois triângulos.
-// - Usa wrap(...) para aplicar a identificação correta (torus ou klein).
-// - Verifica se o triângulo não é degenerado ou duplicado.
-// - Retorna lista de triângulos orientados sem repetições.
-function triangulatedFaces(m:number,n:number,wrap:(i:number,j:number,m:number,n:number)=>readonly [number,number]){
-  const vid = (ii:number,jj:number)=> ii*n + jj;
-  const seen = new Set<string>();
-  const triList: [number,number,number][] = [];
-  for(let i=0;i<m;i++) for(let j=0;j<n;j++){
-    const [i1,j1]=wrap(i+1,j,m,n);
-    const [i2,j2]=wrap(i,j+1,m,n);
-    const [i3,j3]=wrap(i+1,j+1,m,n);
-    const v00=vid(...wrap(i,j,m,n));
-    const v10=vid(i1,j1);
-    const v01=vid(i2,j2);
-    const v11=vid(i3,j3);
-    const candidates: [number,number,number][] = [
-      [v00,v10,v11],
-      [v00,v11,v01],
-    ];
-    for (const t of candidates){
-      const uniq = new Set(t);
-      if (uniq.size!==3) continue; // drop degenerate vertex repeats
-      const ekeys = new Set<string>([
-        `${Math.min(t[0],t[1])},${Math.max(t[0],t[1])}`,
-        `${Math.min(t[1],t[2])},${Math.max(t[1],t[2])}`,
-        `${Math.min(t[0],t[2])},${Math.max(t[0],t[2])}`,
-      ]);
-      if (ekeys.size!==3) continue; // drop triangles whose boundary reuses an edge
-      const key = [...t].sort((a,b)=>a-b).join(",");
-      if (!seen.has(key)){
-        seen.add(key);
-        triList.push(t); // keep orientation as built
-      }
-    }
-  }
-  return triList;
-}
-
-
-// ======================================================
-// allSimplicesFromTriangles(triangles)
-// ======================================================
-//
-// - Recebe apenas 2-símplices (triângulos).
-// - Gera automaticamente:
-//
-//      C_0 = vértices únicos
-//      C_1 = arestas únicas (não orientadas)
-//      C_2 = os triângulos
-//
-// - Ordena e retorna todos os símplices prontos para formar:
-//      simplices = [C_0, C_1, C_2]
-//
-// - Serve para gerar o complexo simplicial completo.
-function allSimplicesFromTriangles(triangles: [number,number,number][]) {
-  const V=new Set<number>(); const E=new Set<string>(); const T=new Set<string>();
-  const orientedTris: [number,number,number][] = [];
-  for(const t of triangles){
-    const [a,b,c] = t;
-    const uniq = new Set([a,b,c]);
-    if (uniq.size!==3) continue;
-    const key=[a,b,c].sort((x,y)=>x-y).join(",");
-    if (!T.has(key)){
-      T.add(key);
-      orientedTris.push([a,b,c]); // preserve orientation
-    }
-    V.add(a); V.add(b); V.add(c);
-    const edges:[[number,number],[number,number],[number,number]] = [[a,b],[a,c],[b,c]];
-    for(const [u,v] of edges){
-      if (u===v) continue;
-      const uu=Math.min(u,v), vv=Math.max(u,v);
-      E.add(`${uu},${vv}`);
-    }
-  }
-  const verts = Array.from(V).sort((a,b)=>a-b).map(v=>[v]);
-  const edges = Array.from(E).map(e=>e.split(",").map(x=>parseInt(x,10)) as [number,number]).sort((a,b)=> a[0]-b[0] || a[1]-b[1]);
-  const tris  = orientedTris;
-  return [...verts, ...edges, ...tris] as number[][];
-}
-
-
-// ======================================================
-// buildRP2Minimal()
-// ======================================================
-//
-// - Constrói a triangulação mínima clássica da RP²:
-//     6 vértices, 15 arestas, 10 triângulos.
-//
-// - Essa triangulação é conhecida por gerar H₁(RP²)=Z/2.
-// - O app usa esta versão porque:
-//       * é pequena
-//       * tem torção visível
-//       * é padrão nos livros e notas.
-//
-// - Retorna {simplices, faces}.
-function buildRP2Minimal() {
-  // 6-vertex, 15-edge, 10-triangle minimal triangulation of RP^2
-  // Referência: [123], [124], [135], [146], [156],
-  //             [236], [245], [256], [345], [346]
-  // (vértices renumerados de 1..6 para 0..5)
-
-  const tris: [number, number, number][] = [
-    [0, 1, 2],
-    [0, 1, 3],
-    [0, 2, 4],
-    [0, 3, 5],
-    [0, 4, 5],
-    [1, 2, 5],
-    [1, 3, 4],
-    [1, 4, 5],
-    [2, 3, 4],
-    [2, 3, 5],
-  ];
-
-  const simplices = allSimplicesFromTriangles(tris);
-  return { simplices, faces: tris as unknown as number[][] };
-}
-
-// ======================================================
-// buildComplex(space, m, n)
-// ======================================================
-//
-// - Decide qual triangulação construir:
-//
-//     "rp2"  → triangulação mínima fixa
-//     "torus" → triangulação m×n com wrap toroidal
-//     "klein" → triangulação m×n com wrap måbius em uma direção
-//
-// - Gera faces e todos os símplices.
-// - Usada pelo botão “Triangulate”.
-function buildComplex(space: 'torus'|'klein'|'rp2', m:number, n:number){
-  if (space==='rp2'){
-    return buildRP2Minimal();
-  }
-  const wrap = space==='torus' ? wrapTorus : wrapKlein;
-  const faces = triangulatedFaces(m,n,wrap);
-  const simplices = allSimplicesFromTriangles(faces);
-  return { simplices, faces };
-}
-
-// ======================================================
-// orientedFaces(simplex)
-// ======================================================
-//
-// - Para um k-símplice [v0,...,vk], produz suas k+1 faces de dimensão k-1:
-//      remover o i-ésimo vértice,
-//      com sinal alternante (-1)^i.
-//
-// - Usado na construção da matriz ∂_k.
-function orientedFaces(simplex: number[]){
-  const faces: {face:number[];sign:bigint}[] = [];
-  for(let i=0;i<simplex.length;i++){
-    const face=[...simplex.slice(0,i), ...simplex.slice(i+1)];
-    const sign = (i%2===0)? 1n : -1n; // alternating sign
-    faces.push({face, sign});
-  }
-  return faces;
-}
-
-// ======================================================
-// groupByDim(simplices)
-// ======================================================
-//
-// - Agrupa os símplices pelo valor de k = dimensão.
-// - Ordena cada lista de forma consistente.
-// - Resulta no mapa:
-//
-//      0 → C_0
-//      1 → C_1
-//      2 → C_2
-//
-// - Base do cálculo das matrizes de fronteira.
-function groupByDim(simplices: number[][]){
-  const by = new Map<number, number[][]>();
-  for(const s of simplices){ const k=s.length-1; if(!by.has(k)) by.set(k, []); by.get(k)!.push(s); }
-  for(const [,arr] of by) arr.sort((a,b)=>{
-    for(let i=0;i<Math.min(a.length,b.length);i++){ if(a[i]!==b[i]) return a[i]-b[i]; }
-    return a.length-b.length;
-  });
-  return by;
-}
-
-
-// ======================================================
-// boundaryMatrix(by, k)
-// ======================================================
-//
-// - Constrói a matriz ∂_k : C_k → C_{k-1}.
-//
-// - Para cada σ ∈ C_k:
-//     * obtém suas faces orientadas
-//     * normaliza a orientação
-//     * insere ±1 na posição correta
-//
-// - A saída:
-//
-//      M: bigint[][]  (matriz inteira ∂_k)
-//      rows: C_{k-1}
-//      cols: C_k
-//
-// - Base para RREF, SNF e cálculo da homologia.
-function boundaryMatrix(by: Map<number, number[][]>, k: number){
-  const rows = by.get(k-1)||[]; const cols = by.get(k)||[];
-  if (k<=0 || cols.length===0 || rows.length===0) return {M:[] as bigint[][], rows, cols};
-  const rowIndex = new Map<string, number>(rows.map((s,i)=>[s.join(","), i] as const));
-
-  function normalizeWithParity(face: number[]): {key:string; parity:number}{
-    const sorted = [...face].sort((a,b)=>a-b);
-    let inversions=0;
-    for(let i=0;i<face.length;i++) for(let j=i+1;j<face.length;j++) if (face[i]>face[j]) inversions++;
-    const parity = (inversions % 2 === 0) ? +1 : -1;
-    return { key: sorted.join(","), parity };
-  }
-
-  const M: bigint[][] = Array(rows.length).fill(null).map(()=>Array(cols.length).fill(0n));
-  cols.forEach((sigma, j)=>{
-    for(const {face, sign} of orientedFaces(sigma)){
-      const { key, parity } = normalizeWithParity(face);
-      const i = rowIndex.get(key);
-      if (i!==undefined) {
-        const s = sign * BigInt(parity);
-        M[i][j] += s;
-      }
-    }
-  });
-  return {M, rows, cols};
-}
-
-// ======================================================
-// bettiAndTorsion(by)
-// ======================================================
-//
-// - Dado o complexo simplicial agrupado por dimensão,
-//   constrói ∂_k e ∂_{k+1} para cada k e obtém:
-//
-//        rank(d_k)
-//        rank(d_{k+1})
-//        beta_k = dim C_k – rank d_k – rank d_{k+1}
-//        torção: fatores > 1 vindos da SNF(d_{k+1})
-//
-// - Retorna um vetor com a homologia completa:
-//
-//     H_k ≅ Z^{beta_k} ⊕ ( ⊕ Z / tors_i )
-//
-// - Usado na aba final “Homology (Z & R)”.
-//
-
-function bettiAndTorsion(by: Map<number, number[][]>){
-  const dims = Array.from(by.keys());
-  const maxk = dims.length? Math.max(...dims) : 0;
-  const d = new Map<number, {M:bigint[][], rows:number[][], cols:number[][]}>();
-  for(let k=1;k<=maxk;k++) d.set(k, boundaryMatrix(by,k));
-  const out: {k:number; n_k:number; rank_dk:number; rank_dk1:number; beta:number; torsion: bigint[]}[] = [];
-  for(let k=0;k<=maxk;k++){
-    const n_k = (by.get(k)||[]).length;
-    const B = d.get(k)?.M || Array((by.get(k-1)||[]).length).fill(null).map(()=>Array(n_k).fill(0n));
-    const A = d.get(k+1)?.M || Array((by.get(k)||[]).length).fill(null).map(()=>Array((by.get(k+1)||[]).length).fill(0n));
-    const rq = rankOverQ(B); const rq1=rankOverQ(A);
-    const free = n_k - rq - rq1;
-    let tors: bigint[]=[];
-    if (A.length && A[0].length){
-      const diag = snfDiagonal(A);
-      tors = diag.filter(x=> x!==0n && x!==1n && x!==-1n).map(x=> (x<0n? -x:x));
-    }
-    out.push({k, n_k, rank_dk: rq, rank_dk1: rq1, beta: free, torsion: tors});
-  }
-  return out;
-}
-
-// ======================================================
-// Test helpers (keep; used by the button below)
-// ======================================================
-function simplicesCycle3(){
-  // S^1 with 3 vertices and 3 edges
-  return [[0],[1],[2],[0,1],[1,2],[0,2]] as number[][];
-}
-function simplicesFilledTriangle(){
-  return [[0],[1],[2],[0,1],[1,2],[0,2],[0,1,2]] as number[][];
-}
-function summarizeHomology(list: number[][]){
-  const by = groupByDim(list);
-  return bettiAndTorsion(by);
-}
-
-// ======================================================
-// Sanitize logs to avoid stray '>' in JSX text
-// ======================================================
-function sanitizeForJsxText(s: string){
-  return s.replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
-}
-
-// ======================================================
-// TriangulationView
-// ======================================================
-//
-// - Renderiza o complexo simplicial em SVG.
-// - Para torus/klein: usa grade m×n embutida.
-// - Para RP²: desenha vértices em círculo e mostra gluing.
-// - Destaca:
-//
-//     * símplice selecionado
-//     * arestas identificadas na RP²
-//     * orientação do triângulo
-//
-// Base visual da triangulação.
-function TriangulationView({
-  space,
-  m,
-  n,
-  faces,
-  selectedSimplex,
-  rp2Decomp,
-  highlightEdges,
-}: {
-  space: "torus" | "klein" | "rp2";
-  m: number;
-  n: number;
-  faces: number[][];
-  selectedSimplex: number[] | null;
-  rp2Decomp?: boolean;
-  highlightEdges?: [number, number][];
-}) {
-  // positions of vertices in the drawing
-  const pos = useMemo(() => {
-    const P = new Map<number, { x: number; y: number }>();
-
-    if (space === "rp2") {
-      const R = 0.42,
-        cx = 0.5,
-        cy = 0.5;
-      for (let v = 0; v < 6; v++) {
-        const ang = (2 * Math.PI * v) / 6 - Math.PI / 2;
-        P.set(v, { x: cx + R * Math.cos(ang), y: cy + R * Math.sin(ang) });
-      }
-    } else {
-      for (let i = 0; i < m; i++) {
-        for (let j = 0; j < n; j++) {
-          const id = i * n + j;
-          P.set(id, { x: (j + 0.5) / n, y: (i + 0.5) / m });
-        }
-      }
-    }
-
-    return P;
-  }, [space, m, n, faces]);
-
-  // orientação canônica das 6 arestas de borda da RP²
-  // A convenção é: (0,5) ~ (2,3), (1,2) ~ (4,5), (0,1) ~ (3,4),
-  // sempre coladas com orientações opostas ao longo do hexágono.
-  function orientEdge(u: number, v: number): [number, number] {
-    if (space !== "rp2") return [u, v];
-
-    const a = Math.min(u, v);
-    const b = Math.max(u, v);
-    const key = `${a},${b}`;
-
-    switch (key) {
-      // Par a: {0,5} ~ {2,3}
-      case "0,5":
-        return [5, 0]; // seta subindo à direita
-      case "2,3":
-        return [2, 3]; // seta descendo à esquerda
-
-      // Par b: {1,2} ~ {4,5}
-      case "1,2":
-        return [2, 1]; // seta subindo à direita (lado direito)
-      case "4,5":
-        return [5, 4]; // seta descendo à esquerda (lado esquerdo)
-
-      // Par c: {0,1} ~ {3,4}
-      case "0,1":
-        return [0, 1]; // seta para a direita em cima
-      case "3,4":
-        return [3, 4]; // seta para a esquerda embaixo
-
-      default:
-        return [u, v];
-    }
-  }
-
-  // undirected edges (for base drawing)
-  const edges = useMemo(() => {
-    const E = new Set<string>();
-    for (const f of faces) {
-      if (f.length !== 3) continue;
-      const [a, b, c] = f as number[];
-      [[a, b], [b, c], [a, c]].forEach(([u, v]) => {
-        const uu = Math.min(u, v),
-          vv = Math.max(u, v);
-        E.add(`${uu},${vv}`);
-      });
-    }
-    return Array.from(E).map(
-      (s) => s.split(",").map((v) => parseInt(v, 10)) as [number, number]
-    );
-  }, [faces]);
-
-  const W = 560,
-    H = 360;
-
-  const isSelectedTriangle = (a: number, b: number, c: number) =>
-    selectedSimplex?.length === 3 &&
-    selectedSimplex.every((v) => [a, b, c].includes(v));
-
-  const isSelectedEdge = (u: number, v: number) =>
-    selectedSimplex?.length === 2 &&
-    ((selectedSimplex[0] === u && selectedSimplex[1] === v) ||
-      (selectedSimplex[0] === v && selectedSimplex[1] === u));
-
-  const isSelectedVertex = (id: number) =>
-    selectedSimplex?.length === 1 && selectedSimplex[0] === id;
-
-  // Edges that belong to the Möbius strip triangles (Tri0, Tri1, Tri2)
-  // Tri0: (0,1,2) -> edges: 0-1, 1-2, 0-2
-  // Tri1: (0,1,3) -> edges: 0-1, 1-3, 0-3
-  // Tri2: (0,2,4) -> edges: 0-2, 2-4, 0-4
-  const mobiusEdgesRP2 = new Set([
-    "0,1",
-    "1,2",
-    "0,2",
-    "1,3",
-    "0,3",
-    "2,4",
-    "0,4",
-  ]);
-
-  return (
-    <svg
-      viewBox={`0 0 ${W} ${H}`}
-      width="100%"
-      className="rounded-xl border bg-white"
-    >
-      {/* Arrowhead definition for orientation arrows */}
-      <defs>
-        <marker
-          id="arrow-red"
-          viewBox="0 0 10 10"
-          refX="10"
-          refY="5"
-          markerWidth="7"
-          markerHeight="7"
-          orient="auto"
-          markerUnits="strokeWidth"
-        >
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(220,38,38,1)" />
-        </marker>
-      </defs>
-
-      {/* ===== TRIANGLES ===== */}
-      {faces
-        .filter((f) => f.length === 3)
-        .map((t, idx) => {
-          const [a, b, c] = t as number[];
-          const pa = pos.get(a),
-            pb = pos.get(b),
-            pc = pos.get(c);
-          if (!pa || !pb || !pc) return null;
-
-          const pts = [pa, pb, pc]
-            .map((p) => `${p.x * W},${p.y * H}`)
-            .join(" ");
-
-          const sel = isSelectedTriangle(a, b, c);
-
-          // geometric orientation (cross product)
-          const cross =
-            (pb.x - pa.x) * (pc.y - pa.y) -
-            (pb.y - pa.y) * (pc.x - pa.x);
-          const ccw = cross > 0;
-
-          // centroid
-          const cx = (pa.x + pb.x + pc.x) / 3;
-          const cy = (pa.y + pb.y + pc.y) / 3;
-
-          // RP² decomposition: Möbius strip + disk
-          const showDecomp = space === "rp2" && !!rp2Decomp;
-
-          // Na triangulação atual:
-          // idx = 0,1,2 -> triângulos da faixa de Möbius
-          const isMobiusTri = showDecomp && (idx === 0 || idx === 1 || idx === 2);
-
-          let fillColor: string;
-          let strokeColor: string;
-          let strokeWidth: number;
-
-          if (sel) {
-            fillColor = "rgba(239,68,68,0.35)";
-            strokeColor = "rgba(220,38,38,1)";
-            strokeWidth = 3;
-          } else if (isMobiusTri) {
-            // Möbius strip: orange interior, green border
-            fillColor = "#f97316";      // strong orange
-            strokeColor = "#22c55e";    // green-500
-            strokeWidth = 3;
-          } else {
-            // normal look for non-Möbius triangles
-            fillColor = "rgba(59,130,246,0.15)";
-            strokeColor = "rgba(59,130,246,0.6)";
-            strokeWidth = 1;
-          }
-
-          return (
-            <g key={idx}>
-              <polygon
-                points={pts}
-                fill={fillColor}
-                stroke={strokeColor}
-                strokeWidth={strokeWidth}
-              />
-
-              {/* orientation symbol ONLY when triangle selected */}
-              {sel && (
-                <text
-                  x={cx * W}
-                  y={cy * H}
-                  fontSize={18}
-                  textAnchor="middle"
-                  alignmentBaseline="middle"
-                  fill="rgba(31,41,55,0.9)"
-                >
-                  {ccw ? "⟲" : "⟳"}
-                </text>
-              )}
-
-              {/* boundary arrows [a,b], [b,c], [c,a] when triangle selected */}
-              {sel &&
-                [
-                  [a, b],
-                  [b, c],
-                  [c, a],
-                ].map(([u, v], j) => {
-                  const p1 = pos.get(u)!;
-                  const p2 = pos.get(v)!;
-                  const x1 = (p1.x + 0.3 * (p2.x - p1.x)) * W;
-                  const y1 = (p1.y + 0.3 * (p2.y - p1.y)) * H;
-                  const x2 = (p1.x + 0.7 * (p2.x - p1.x)) * W;
-                  const y2 = (p1.y + 0.7 * (p2.y - p1.y)) * H;
-
-                  return (
-                    <line
-                      key={`tri-edge-orient-${idx}-${j}`}
-                      x1={x1}
-                      y1={y1}
-                      x2={x2}
-                      y2={y2}
-                      stroke="rgba(220,38,38,1)"
-                      strokeWidth={2}
-                      markerEnd="url(#arrow-red)"
-                    />
-                  );
-                })}
-            </g>
-          );
-        })}
-
-      {/* ===== BASE EDGES ===== */}
-      {edges.map(([u, v], i) => {
-        const pu = pos.get(u),
-          pv = pos.get(v);
-        if (!pu || !pv) return null;
-
-        const sel = isSelectedEdge(u, v);
-        const keySorted = [u, v].slice().sort((a, b) => a - b).join(",");
-        const showDecomp = space === "rp2" && !!rp2Decomp;
-        const isMobiusEdge = showDecomp && mobiusEdgesRP2.has(keySorted);
-
-        const edgeStroke = sel
-          ? "rgba(220,38,38,1)"
-          : isMobiusEdge
-          ? "rgba(34,197,94,1)" // strong green for Möbius edges
-          : "rgba(17,24,39,0.7)";
-
-        const edgeWidth = sel ? 3 : isMobiusEdge ? 3 : 1.4;
-
-        return (
-          <line
-            key={`e${i}`}
-            x1={pu.x * W}
-            y1={pu.y * H}
-            x2={pv.x * W}
-            y2={pv.y * H}
-            stroke={edgeStroke}
-            strokeWidth={edgeWidth}
-          />
-        );
-      })}
-
-      {/* ===== GLUED EDGE PAIRS HIGHLIGHT (RP²) ===== */}
-      {highlightEdges &&
-        highlightEdges.map(([u, v], idx) => {
-          // usa a orientação canônica da RP²
-          const [ou, ov] = orientEdge(u, v);
-          const pu = pos.get(ou);
-          const pv = pos.get(ov);
-          if (!pu || !pv) return null;
-
-          const x1 = (pu.x + 0.35 * (pv.x - pu.x)) * W;
-          const y1 = (pu.y + 0.35 * (pv.y - pu.y)) * H;
-          const x2 = (pu.x + 0.65 * (pv.x - pu.x)) * W;
-          const y2 = (pu.y + 0.65 * (pv.y - pu.y)) * H;
-
-          return (
-            <line
-              key={`glued-${idx}`}
-              x1={x1}
-              y1={y1}
-              x2={x2}
-              y2={y2}
-              stroke="rgba(220,38,38,1)"
-              strokeWidth={3}
-              markerEnd="url(#arrow-red)"
-            />
-          );
-        })}
-
-      {/* ===== EXTRA ARROW FOR SELECTED 1-SIMPLEX ===== */}
-      {selectedSimplex &&
-        selectedSimplex.length === 2 &&
-        (() => {
-          const [u, v] = orientEdge(selectedSimplex[0], selectedSimplex[1]);
-          const pu = pos.get(u);
-          const pv = pos.get(v);
-          if (!pu || !pv) return null;
-
-          const x1 = (pu.x + 0.35 * (pv.x - pu.x)) * W;
-          const y1 = (pu.y + 0.35 * (pv.y - pu.y)) * H;
-          const x2 = (pu.x + 0.65 * (pv.x - pu.x)) * W;
-          const y2 = (pu.y + 0.65 * (pv.y - pu.y)) * H;
-
-          return (
-            <line
-              x1={x1}
-              y1={y1}
-              x2={x2}
-              y2={y2}
-              stroke="rgba(220,38,38,1)"
-              strokeWidth={3}
-              markerEnd="url(#arrow-red)"
-            />
-          );
-        })()}
-
-      {/* ===== VERTICES ===== */}
-      {Array.from(pos.entries()).map(([id, p]) => {
-        const sel = isSelectedVertex(id);
-        return (
-          <g key={`v${id}`}>
-            <circle
-              cx={p.x * W}
-              cy={p.y * H}
-              r={sel ? 7 : 3.2}
-              fill={sel ? "rgba(220,38,38,1)" : "#111827"}
-            />
-            <text
-              x={p.x * W + 6}
-              y={p.y * H - 6}
-              fontSize={11}
-              fill="#111827"
-            >
-              {id}
-            </text>
-          </g>
-        );
-      })}
-    </svg>
-  );
-}
-
-
-
-
-// ======================================================
-// Section
-// ======================================================
-//
-// - Componente visual de seção dobrável.
-// - Usado para organizar a interface (Triangulação, C_k, d_k, RREF, SNF…)
-//
-
-function Section({
-  title,
-  children,
-  withSVGToggle,
-  isWithSVG,
-  onToggleWithSVG,
-}: {
-  title: string;
-  children: React.ReactNode;
-  withSVGToggle?: boolean;
-  isWithSVG?: boolean;
-  onToggleWithSVG?: (checked: boolean) => void;
-}) {
-  const [open, setOpen] = useState(true);
-
-  return (
-    <section className="mb-4 rounded-2xl shadow bg-white p-4 h-full flex flex-col">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-gray-700">{title}</h2>
-        <div className="flex items-center gap-2">
-          {withSVGToggle && (
-            <label className="inline-flex items-center gap-1 text-xs text-gray-600">
-              <input
-                type="checkbox"
-                className="rounded border-gray-300"
-                checked={isWithSVG}
-                onChange={(e) => onToggleWithSVG?.(e.target.checked)}
-              />
-              <span>📍 Fixar com SVG</span>
-            </label>
-          )}
-          <button
-            type="button"
-            onClick={() => setOpen((o) => !o)}
-            className="text-xs px-2 py-1 rounded border border-gray-300 hover:bg-gray-50"
-          >
-            {open ? "Esconder" : "Mostrar"}
-          </button>
-        </div>
-      </div>
-
-      {open && (
-        <div className="mt-2 text-sm text-gray-800 flex-1">
-          {children}
-        </div>
-      )}
-    </section>
-  );
-}
-
-// ======================================================
-// MatrixView & MatrixViewFrac
-// ======================================================
-//
-// - Renderizam matrizes (BigInt e Fractions).
-// - Usadas para:
-//
-//      * ∂2, ∂1
-//      * RREF(d2), RREF(d1)
-//      * SNF(d2) com passos
-//
-// - Suportam highlight: azul, vermelho, verde, pivôs, colunas ativas.
-// - Suportam clique em coluna.
-// - MatrixViewFrac trata frações exatas.
-
-function MatrixView({
-  M,
-  rows = [],
-  cols = [],
-  caption,
-  activeCol = null,
-  onColClick,
-}: {
-  M: (number | bigint | string)[][];
-  rows: number[][];
-  cols: number[][];
-  caption?: string;
-  activeCol?: number | null;
-  onColClick?: (col: number[], j: number) => void;
-}) {
-  if (!M || !M.length)
-    return <div className="text-sm text-gray-600">(vazio)</div>;
-
-  return (
-    <div className="overflow-auto">
-      {caption && (
-        <div className="text-sm text-gray-700 mb-1">{caption}</div>
-      )}
-
-      <table className="text-xs border-collapse">
-        <thead>
-          <tr>
-            <th className="px-1 py-0.5 text-left text-gray-500">
-              Linhas / Colunas
-            </th>
-            {cols.map((c, j) => {
-              const isActive = activeCol === j;
-              return (
-                <th
-                  key={j}
-                  className={
-                    "px-1 py-0.5 border-b text-gray-700" +
-                    (onColClick ? " cursor-pointer hover:bg-blue-100" : "")
-                  }
-                  style={
-                    isActive
-                      ? { backgroundColor: "#bfdbfe", color: "black", fontWeight: 600 }
-                      : {}
-                  }
-                  onClick={onColClick ? () => onColClick(c, j) : undefined}
-                >
-                  ({c.join(",")})
-                </th>
-              );
-            })}
-          </tr>
-        </thead>
-
-        <tbody>
-          {rows.map((r, i) => {
-            // value in the active column
-            const rawVal =
-              activeCol != null ? M[i][activeCol] : undefined;
-            const numVal =
-              rawVal === undefined || rawVal === null
-                ? 0
-                : Number(rawVal); // handles "0", 0, 0n, "1", -1, etc.
-
-            const rowUsed =
-              activeCol != null && !Number.isNaN(numVal) && numVal !== 0;
-
-            return (
-              <tr key={i}>
-                {/* Row label cell: blue bg only if rowUsed */}
-                <td
-                  className="px-1 py-0.5 pr-2 border-r whitespace-nowrap"
-                  style={
-                    rowUsed
-                      ? {
-                          backgroundColor: "#bfdbfe",
-                          color: "black",
-                          fontWeight: 600,
-                        }
-                      : {}
-                  }
-                >
-                  ({r.join(",")})
-                </td>
-
-                {/* Data cells */}
-                {M[i].map((x, j) => {
-                  const cellNum =
-                    x === undefined || x === null ? 0 : Number(x);
-                  const highlight =
-                    activeCol === j &&
-                    !Number.isNaN(cellNum) &&
-                    cellNum !== 0; // only ±1, not 0
-
-                  return (
-                    <td
-                      key={j}
-                      className="px-1 py-0.5 text-center"
-                      style={
-                        highlight
-                          ? {
-                              backgroundColor: "#bfdbfe",
-                              color: "black",
-                              fontWeight: 600,
-                            }
-                          : {}
-                      }
-                    >
-                      {typeof x === "bigint" ? x.toString() : String(x)}
-                    </td>
-                  );
-                })}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-
-      <div className="text-[11px] text-gray-500 mt-1">
-        shape = ({M.length}, {M[0]?.length || 0})
-      </div>
-    </div>
-  );
-}
-
-
-type MatrixViewFracProps = {
-  M: Frac[][];
-  rows?: number[][];
-  cols?: number[][];
-  caption?: string;
-  activeCol?: number | null;
-  onColClick?: (col: number[], j: number) => void;
-  blueRows?: number[];  // rows we “sum from”
-  redRows?: number[];   // rows we modify
-  pivotCells?: { row: number; col: number }[]; // cells to highlight (pivots)
-};
-
-function MatrixViewFrac({
-  M,
-  rows = [],
-  cols = [],
-  caption,
-  activeCol = null,
-  onColClick,
-  blueRows = [],
-  redRows = [],
-  pivotCells = [],
-}: MatrixViewFracProps) {
-  if (!M || !M.length) {
-    return <div className="text-sm text-gray-600">(vazio)</div>;
-  }
-
-  const rowLabels = rows.length ? rows : M.map((_, i) => [i]);
-  const colLabels = cols.length ? cols : M[0].map((_, j) => [j]);
-
-  return (
-    <div className="overflow-auto">
-      {caption && (
-        <div className="text-sm text-gray-700 mb-1">
-          {caption}
-        </div>
-      )}
-
-      {/* Center the whole matrix */}
-      <div className="flex justify-center w-full">
-        <table className="text-xs border-collapse">
-          <thead>
-            <tr>
-              <th className="px-1 py-0.5 text-center text-gray-500">
-                Linhas / Colunas
-              </th>
-              {colLabels.map((c, j) => {
-                const isActiveCol = activeCol === j;
-                return (
-                  <th
-                    key={j}
-                    className="px-1 py-0.5 text-center align-middle border-b border-gray-300 cursor-pointer"
-                    style={
-                      isActiveCol
-                        ? { backgroundColor: "#bfdbfe", fontWeight: 600 }
-                        : {}
-                    }
-                    onClick={() => onColClick && onColClick(c, j)}
-                  >
-                    ({c.join(",")})
-                  </th>
-                );
-              })}
-            </tr>
-          </thead>
-          <tbody>
-            {M.map((row, i) => {
-              const r = rowLabels[i] ?? [i];
-              const isBlue = blueRows.includes(i);
-              const isRed = redRows.includes(i);
-
-              const baseRowBg = isBlue
-                ? "#dcfce7" // light green
-                : isRed
-                ? "#fee2e2" // light red
-                : "transparent";
-
-              return (
-                <tr key={i}>
-                  {/* row label */}
-                  <td
-                    className="px-1 py-0.5 pr-2 text-gray-700 border-r whitespace-nowrap text-center"
-                    style={{ backgroundColor: baseRowBg, verticalAlign: "middle" }}
-                  >
-                    ({r.join(",")})
-                  </td>
-
-                  {/* data cells */}
-                  {row.map((x, j) => {
-                    const isActiveCol = activeCol === j;
-                    const isPivotCell = pivotCells.some(
-                      (p) => p.row === i && p.col === j
-                    );
-
-                    let cellBg = baseRowBg;
-
-                    if (isActiveCol) {
-                      // while stepping: highlight pivot column / row
-                      cellBg = isBlue ? "#bbf7d0" : "#bfdbfe";
-                    }
-                    if (isPivotCell) {
-                      // final pivot highlight (Finish all steps / button 5)
-                      cellBg = "#bfdbfe";
-                    }
-
-                    return (
-                      <td
-                        key={j}
-                        className="px-1 py-0.5 text-center"
-                        style={{ backgroundColor: cellBg, verticalAlign: "middle"}}
-                      >
-                        {x.toString()}
-                      </td>
-                    );
-                  })}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="text-[11px] text-gray-500 mt-1">
-        shape = ({M.length}, {M[0]?.length || 0})
-      </div>
-    </div>
-  );
-}
-
-// ======================================================
-// ChainsView
-// ======================================================
-//
-// - Lista C_0, C_1, C_2 … com botões para selecionar símplices.
-// - Mostra dimensão, quantidade e os próprios símplices.
-// - Permite destacar um símplice na triangulação.
-//
-// Interface da parte "cadeias".
-//
-
-function ChainsView({
-  by,
-  selected,
-  onSelect,
-}: {
-  by: Map<number, number[][]>;
-  selected: number[] | null;
-  onSelect: (sigma: number[] | null) => void;
-}) {
-  if (!by || by.size === 0) {
-    return <div className="text-sm text-gray-600">(construa as cadeias para ver C_k)</div>;
-  }
-
-  const dims = Array.from(by.keys()).sort((a, b) => a - b);
-  const maxPerDim = 40;
-
-  const labelForK = (k: number) => {
-    if (k === 0) return "vértices";
-    if (k === 1) return "arestas";
-    if (k === 2) return "triângulos";
-    return `${k}-símplices`;
-  };
-
-  const handleSimplexClick = (s: number[]) => {
-    // Check if this simplex is already selected
-    const isAlreadySelected =
-      selected &&
-      selected.length === s.length &&
-      selected.every((v, idx) => v === s[idx]);
-
-    // If already selected, deselect it (pass null)
-    // Otherwise, select it
-    onSelect(isAlreadySelected ? null : s);
-  };
-
-  return (
-    <div className="space-y-4">
-      {dims.map((k) => {
-        const simplices = by.get(k) || [];
-        const shown = simplices.slice(0, maxPerDim);
-        const extra = simplices.length - shown.length;
-
-        return (
-          <div key={k} className="rounded-2xl border bg-gray-50 px-3 py-2">
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-              <div className="font-semibold text-sm">{`C_${k}`}</div>
-              <div className="flex items-center gap-2 text-[11px] text-gray-600">
-                <span className="px-2 py-0.5 rounded-full bg-white border">
-                  {labelForK(k)}
-                </span>
-                <span className="px-2 py-0.5 rounded-full bg-white border">
-                  {`dim = ${simplices.length}`}
-                </span>
-              </div>
-            </div>
-
-            {simplices.length === 0 ? (
-              <div className="text-xs text-gray-600 italic">
-                (nenhum símplice nesta dimensão)
-              </div>
-            ) : (
-              <>
-                <div className="flex flex-wrap gap-1">
-                  {shown.map((s, i) => {
-                    const isSelected =
-                      selected &&
-                      selected.length === s.length &&
-                      selected.every((v, idx) => v === s[idx]);
-
-                    return (
-                      <button
-                        key={i}
-                        onClick={() => handleSimplexClick(s)}
-                        className={
-                          "inline-flex items-center px-2 py-1 rounded-full border text-[11px] font-mono transition " +
-                          (isSelected
-                            ? "bg-blue-500 text-white border-blue-600"
-                            : "bg-white hover:bg-blue-100")
-                        }
-                      >
-                        [{s.join(", ")}]
-                      </button>
-                    );
-                  })}
-                </div>
-                {extra > 0 && (
-                  <div className="mt-1 text-[11px] text-gray-500">
-                    … + {extra} símplices adicionais em C_{k}
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-// ======================================================
-// go1_triangulate … go7_homology
-// ======================================================
-//
-// Etapas do pipeline:
-//
-//   1. go1_triangulate
-//         → constrói triangulação
-//   2. go2_chains
-//         → monta C_k
-//   3. go3_boundaries
-//         → monta ∂_2 e ∂_1 (matrizes)
-//   4. go4_ranks
-//         → rank(d1), rank(d2) via rref
-//   5. go5_reduce
-//         → RREF(d1), RREF(d2) completos
-//   6. go6_snf
-//         → SNF(d2) + passos detalhados
-//   7. go7_homology
-//         → betti_k e torção
-//
-// São os botões principais da aplicação.
 
 export default function App() {
   // ----------------- STATE -----------------
@@ -1569,6 +60,13 @@ export default function App() {
   const [simplices, setSimplices] = useState<number[][]>([]);
   const [faces, setFaces] = useState<number[][]>([]);
   const [by, setBy] = useState<Map<number, number[][]>>(new Map());
+
+    // --- Triangulation build step-by-step (C0, C1, C2) ---
+  const [c0Simplices, setC0Simplices] = useState<number[]>([]);
+  const [c1Simplices, setC1Simplices] = useState<[number, number][]>([]);
+  const [c2Simplices, setC2Simplices] = useState<number[][]>([]);
+  const [triBuildStep, setTriBuildStep] = useState(0); // 0 = only vertices
+
   
   const [activeD2Col, setActiveD2Col] = useState<number | null>(null);
   const [activeD1Col, setActiveD1Col] = useState<number | null>(null);
@@ -1582,27 +80,6 @@ export default function App() {
   const [d2StepRow, setD2StepRow] = useState(0);
   const [d2StepCol, setD2StepCol] = useState(0);
   const [d2StepDone, setD2StepDone] = useState(false);
-
-  
-
- type D2RowOp =
-  | { kind: "swap"; r1: number; r2: number }
-  | { kind: "scale"; row: number; factor: Frac }
-  | { kind: "elim"; pivot: number; target: number; factor: Frac };
-
-  type D2RrefSnapshot = {
-    A: Frac[][];
-    pivotRow: number;
-    pivotCol: number;
-    elimIndex: number;
-    done: boolean;
-    pendingOp: D2RowOp | null;
-    blueRows: number[];
-    redRows: number[];
-    opText: string | null;
-  };
-
-  
 
   const [d2ElimIndex, setD2ElimIndex] = useState(0);
   const [d2Done, setD2Done] = useState(false);
@@ -1690,6 +167,28 @@ export default function App() {
   const [selectedSimplex, setSelectedSimplex] = useState<number[] | null>(null);
   const [rp2Decomp, setRp2Decomp] = useState(false);
 
+  // NEW: which part of RP² we want to see
+  const [rp2PartView, setRp2PartView] = useState<"full" | "mobius" | "disk">(
+    "full"
+  );
+
+  const [mobiusT, setMobiusT] = useState(0);
+  const [mobiusPlaying, setMobiusPlaying] = useState(false);
+  const [mobiusSpeed, setMobiusSpeed] = useState(0.5);
+
+  const cycleRp2PartView = () => {
+    setRp2PartView((mode) =>
+      mode === "full" ? "mobius" : mode === "mobius" ? "disk" : "full"
+    );
+  };
+
+
+    // --- Triangulation step-by-step (vertices) ---
+  const [triVertices, setTriVertices] = useState<number[]>([]);
+  const [triVertexIndex, setTriVertexIndex] = useState<number>(-1);
+
+  
+
   const rp2GluedPairs: [number, number][][] = [
     // pair a
     [
@@ -1751,6 +250,8 @@ export default function App() {
   const [d2VisibleCols, setD2VisibleCols] = useState(0);
   const [d1VisibleCols, setD1VisibleCols] = useState(0);
 
+  const [showMobiusLoop, setShowMobiusLoop] = useState<boolean>(true);
+
     // toggles for side-by-side view with SVG
   const [chainsWithSVG, setChainsWithSVG] = useState(false);
   const [d2WithSVG, setD2WithSVG] = useState(false);
@@ -1764,38 +265,113 @@ export default function App() {
     setTests((t) => [...t, sanitizeForJsxText(msg)]);
   }
 
-  // ----------------- PIPELINE ACTIONS -----------------
-  const go1_triangulate = () => {
-    setTrace([]);
-    setSummary([]);
-    setTests([]);
-    setD1(null);
-    setD2(null);
-    setRref1(null);
-    setRref2(null);
-    setBy(new Map());
+ // ----------------- PIPELINE ACTIONS -----------------
+const go1_triangulate = () => {
+  setTrace([]);
+  setSummary([]);
+  setTests([]);
+  setD1(null);
+  setD2(null);
+  setRref1(null);
+  setRref2(null);
+  setBy(new Map());
+  setSelectedSimplex(null);
+
+  // resetar SNF
+  setSnfDiag(null);
+  setSnfSteps(null);
+  setSnfStepIndex(0);
+  setShowSnfDiag(false);
+
+  const { simplices, faces } = buildComplex(space, m, n);
+  setSimplices(simplices as number[][]);
+  setFaces(faces as number[][]);
+
+  // --- separar C0, C1, C2 para construir a figura aos poucos ---
+  const c0: number[] = [];
+  const c1: [number, number][] = [];
+  const c2: number[][] = [];
+
+  for (const s of simplices) {
+    if (s.length === 1) {
+      c0.push(s[0]);
+    } else if (s.length === 2) {
+      c1.push([s[0], s[1]]);
+    } else if (s.length === 3) {
+      c2.push(s);
+    }
+  }
+
+  setC0Simplices(c0);
+  setC1Simplices(c1);
+  setC2Simplices(c2);
+  setTriBuildStep(0);       // começa em: só vértices
+  setSelectedSimplex(null); // nada selecionado
+
+  log(
+    `Chain groups from triangulation: C0=${c0.length}, C1=${c1.length}, C2=${c2.length}`
+  );
+  log(
+    `Built triangulation: ${faces.length} triangles; vertices ≤ ${
+      m * n
+    } (depending on space)`
+  );
+};
+
+
+    // --- Controles para construir a triangulação passo a passo ---
+  function updateSelectionForTriStep(step: number) {
+    if (step <= 0) {
+      setSelectedSimplex(null);
+      return;
+    }
+    if (step <= c1Simplices.length) {
+      const e = c1Simplices[step - 1];
+      if (e) setSelectedSimplex([e[0], e[1]]);
+      else setSelectedSimplex(null);
+    } else {
+      const idx = step - 1 - c1Simplices.length;
+      const t = c2Simplices[idx];
+      if (t) setSelectedSimplex([...t]);
+      else setSelectedSimplex(null);
+    }
+  }
+
+  function triBuildPrev() {
+    setTriBuildStep((s) => {
+      const next = Math.max(0, s - 1);
+      updateSelectionForTriStep(next);
+      return next;
+    });
+    
+  }
+
+  function triBuildAll() {
+    const max = c1Simplices.length + c2Simplices.length;
+    if (max === 0) return;
+
+    // show everything (all edges + all triangles)
+    setTriBuildStep(max);
+    // optional: clear current selection
     setSelectedSimplex(null);
-
-    
-    // resetar SNF
-    setSnfDiag(null);
-    setSnfSteps(null);
-    setSnfStepIndex(0);
-    setShowSnfDiag(false);
+    }
 
 
-    const { simplices, faces } = buildComplex(space, m, n);
-    setSimplices(simplices as number[][]);
-    setFaces(faces as number[][]);
-    log(
-      `Built triangulation: ${faces.length} triangles; vertices ≤ ${
-        m * n
-      } (depending on space)`
-    );
+  function triBuildNext() {
+    const max = c1Simplices.length + c2Simplices.length;
+    if (max === 0) return;
+    setTriBuildStep((s) => {
+      const next = Math.min(max, s + 1);
+      updateSelectionForTriStep(next);
+      return next;
+    });
+  }
 
+  function triBuildReset() {
+    setTriBuildStep(0);
+    setSelectedSimplex(null);
+  }
 
-    
-  };
 
   const go2_chains = () => {
     const g = groupByDim(simplices);
@@ -1953,6 +529,64 @@ export default function App() {
 
   // ----------------- MEMOS / EFFECTS -----------------
   const trianglesPreview = useMemo(() => faces.slice(0, 40), [faces]);
+  
+  // For RP²: split the triangulation into Möbius strip (Tri0,1,2) and disk (rest)
+  const rp2MobiusFaces = useMemo(
+    () => (space === "rp2" ? faces.slice(0, 3) : []),
+    [space, faces]
+  );
+
+  const mobiusBoundaryLoop: [number, number][] = [
+  [0, 1],
+  [1, 2],
+  [2, 4],
+  [4, 0],
+  ];
+
+  // Möbius boundary loop in the hexagon: 0 -> 1 -> 2 -> 4 -> 0
+  const mobiusBoundaryEdges: [number, number][] = [
+    [0, 1],
+    [1, 2],
+    [2, 4],
+    [4, 0],
+  ];
+
+  // near other RP² states
+  const [mobiusFollow, setMobiusFollow] = useState(false);
+
+
+  // 4 distinct colors to match in both pictures
+  const mobiusEdgeColors = ["#ef4444", "#22c55e", "#3b82f6", "#a855f7"];
+
+  const mobiusColoredEdges = mobiusBoundaryEdges.map((edge, idx) => ({
+    edge,
+    color: mobiusEdgeColors[idx],
+    width: 3,
+  }));
+
+  const mobiusOrientedEdges = mobiusBoundaryLoop.map((edge, idx) => ({
+  edge,                    // [u, v] direction = arrow direction
+  color: mobiusEdgeColors[idx],
+  width: 2,
+  }));
+
+  const rp2DiskFaces = useMemo(
+    () => (space === "rp2" ? faces.slice(3) : []),
+    [space, faces]
+  );
+
+  
+
+  // triangle that corresponds to the current C2 step (or null)
+  const currentTri = useMemo(() => {
+    // while we are still in C1 steps, there is no current triangle
+    if (triBuildStep <= c1Simplices.length) return null;
+
+    const idx = triBuildStep - c1Simplices.length - 1;
+    return c2Simplices[idx] ?? null;
+  }, [triBuildStep, c1Simplices, c2Simplices]);
+
+      
   const pivotsCaption2 = useMemo(
     () =>
       rref2
@@ -1973,10 +607,78 @@ export default function App() {
     [rref1]
   );
 
+    // --- quais arestas e triângulos aparecem na figura neste passo ---
+  const drawEdges = useMemo(() => {
+    if (triBuildStep <= 0) return [] as [number, number][];
+    const edgeCount = Math.min(triBuildStep, c1Simplices.length);
+    return c1Simplices.slice(0, edgeCount);
+  }, [triBuildStep, c1Simplices]);
+
+  const drawFaces = useMemo(() => {
+    if (triBuildStep <= c1Simplices.length) return [] as number[][];
+    const triCount = Math.min(
+      triBuildStep - c1Simplices.length,
+      c2Simplices.length
+    );
+    return c2Simplices.slice(0, triCount);
+  }, [triBuildStep, c1Simplices, c2Simplices]);
+
+  const triBuildStepText = useMemo(() => {
+  if (c1Simplices.length === 0 && c2Simplices.length === 0) {
+    return "Click 1) Triangulate above to build the complex.";
+  }
+
+  if (triBuildStep === 0) {
+    return "Step 0: only C₀ (all vertices).";
+  }
+
+  if (triBuildStep <= c1Simplices.length) {
+    const e = c1Simplices[triBuildStep - 1];
+    return `Step ${triBuildStep}: add edge (${e[0]}, ${e[1]}) ∈ C₁.`;
+  }
+
+  const k = triBuildStep - c1Simplices.length;
+  const t = c2Simplices[k - 1];
+  return `Step ${triBuildStep}: add triangle (${t.join(", ")}) ∈ C₂.`;
+}, [triBuildStep, c1Simplices, c2Simplices]);
+
 
   useEffect(() => {
     go1_triangulate();
   }, []);
+
+// velocidade base: 1 volta a cada 4s em 1x
+  const BASE_LAPS_PER_SECOND = 0.25;
+
+useEffect(() => {
+  if (!mobiusPlaying) return;
+
+  let frameId: number;
+  let last = performance.now();
+
+  const loop = (now: number) => {
+    const dt = (now - last) / 1000; // seconds
+    last = now;
+
+    setMobiusT(prev => {
+      const next = prev + dt * mobiusSpeed * 0.25; // base speed
+
+      if (next >= 1) {
+        cancelAnimationFrame(frameId);
+        setMobiusPlaying(false);
+        return 1; // stop at end
+      }
+      return next;
+    });
+
+    frameId = requestAnimationFrame(loop);
+  };
+
+  frameId = requestAnimationFrame(loop);
+  return () => cancelAnimationFrame(frameId);
+}, [mobiusPlaying, mobiusSpeed]);
+
+
 
   // ----------------- STEP-BY-STEP HELPERS -----------------
   // d2
@@ -1993,6 +695,8 @@ export default function App() {
       ? d2.cols.slice(0, visibleD2)
       : [];
 
+  
+      const [followAnt, setFollowAnt] = useState(false);
   // d1
   const totalColsD1 = d1?.cols.length ?? 0;
   const visibleD1 = d1
@@ -2348,72 +1052,7 @@ function nextD1StepRref() {
 
 
 
-  function findNextD2Op(
-  A: Frac[][],
-  startRow: number,
-  startCol: number,
-  elimIndex: number
-): { op: D2RowOp; nextRow: number; nextCol: number; nextElim: number } | null {
-  const m = A.length;
-  const n = m ? A[0].length : 0;
-
-  let r = startRow;
-  let c = startCol;
-  let elim = elimIndex;
-
-  while (r < m && c < n) {
-    // 1. find pivot in column c from row r down
-    let p = -1;
-    for (let i = r; i < m; i++) {
-      if (!A[i][c].isZero()) {
-        p = i;
-        break;
-      }
-    }
-
-    if (p === -1) {
-      // no pivot in this column → move to next column
-      c++;
-      elim = 0;
-      continue;
-    }
-
-    // --- we have a pivot in row p, col c ---
-
-    // case 1: need to swap pivot into row r
-    if (p !== r) {
-      const op: D2RowOp = { kind: "swap", r1: r, r2: p };
-      return { op, nextRow: r, nextCol: c, nextElim: 0 };
-    }
-
-    const pivot = A[r][c];
-
-    // case 2: pivot exists but not equal to 1 → scale row r
-    if (!(pivot.num === 1n && pivot.den === 1n)) {
-      const factor = Frac.one().div(pivot); // multiply row r by this
-      const op: D2RowOp = { kind: "scale", row: r, factor };
-      return { op, nextRow: r, nextCol: c, nextElim: 0 };
-    }
-
-    // case 3: eliminate other entries in column c
-    for (let i = elim; i < m; i++) {
-      if (i === r) continue;
-      if (A[i][c].isZero()) continue;
-      const factor = A[i][c]; // we will do R_i ← R_i − factor·R_r
-      const op: D2RowOp = { kind: "elim", pivot: r, target: i, factor };
-      return { op, nextRow: r, nextCol: c, nextElim: i + 1 };
-    }
-
-    // no more rows to eliminate in this column → go to next pivot
-    r++;
-    c++;
-    elim = 0;
-  }
-
-  // no more pivots/operations
-  return null;
-}
-
+ 
   function prevD2StepRref() {
     if (d2History.length === 0) return;
 
@@ -2645,589 +1284,32 @@ function nextD2StepRref() {
   setD2PivotCol(nextCol);
   setD2ElimIndex(nextElim);
 
-  // SEM COR NAS PAUSAS: preview sem highlight
-  setD2BlueRows([]);
-  setD2RedRows([]);
+  // ---------- PRIMEIRO CLIQUE: PREVIEW WITH COLORS ----------
+  if (op.kind === "swap") {
+    setD2BlueRows([op.r1]);
+    setD2RedRows([op.r2]);
+  } else if (op.kind === "scale") {
+    setD2BlueRows([op.row]);
+    setD2RedRows([]);
+  } else if (op.kind === "elim") {
+    setD2BlueRows([op.target]); // target row turns green
+    setD2RedRows([op.pivot]);   // pivot row turns red
+  }
+
+setD2OpText(formatD2Op(op, nextRow, nextCol));
+
 
   // mas já mostramos o texto da operação
   setD2OpText(formatD2Op(op, nextRow, nextCol));
 }
 
-
-function formatD2Op(op: D2RowOp, pivotRow: number, pivotCol: number): string {
-    const pivotLine = `Pivot: (${pivotRow + 1}, ${pivotCol + 1})`;
-
-  let operacao = "";
-  let linhas = "";
-  let resumo = "";
-
-  switch (op.kind) {
-    case "swap": {
-      const { r1, r2 } = op;
-      operacao = "Troca de linhas";
-      linhas = `Linhas: R${r1 + 1} / R${r2 + 1}`;
-      resumo = `Resumo: R${r1 + 1} ↔ R${r2 + 1}`;
-      break;
-    }
-    case "scale": {
-      const { row, factor } = op;
-      operacao = "Multiplicação";
-      linhas = `Linhas: R${row + 1}`;
-      resumo = `Resumo: R${row + 1} ← ${factor.toString()} · R${row + 1}`;
-      break;
-    }
-    case "elim": {
-      const { pivot, target, factor } = op;
-      operacao = "Soma (eliminação)";
-      linhas = `Linhas: R${target + 1} / R${pivot + 1}`;
-      resumo = `Resumo: R${target + 1} ← R${target + 1} − (${factor.toString()}) · R${pivot + 1}`;
-      break;
-    }
-  }
-
-  return [
-    pivotLine,
-    `Operação: ${operacao}`,
-    linhas,
-    resumo,
-  ].join("\n");
+function sameTriangle(a: number[], b: number[]) {
+  if (!a || !b) return false;
+  if (a.length !== 3 || b.length !== 3) return false;
+  const A = [...a].sort((x, y) => x - y);
+  const B = [...b].sort((x, y) => x - y);
+  return A[0] === B[0] && A[1] === B[1] && A[2] === B[2];
 }
-
-function computePivotsFromFracMatrix(A: Frac[][]): { row: number; col: number }[] {
-  const m = A.length;
-  const n = m ? A[0].length : 0;
-  const pivots: { row: number; col: number }[] = [];
-
-  let r = 0;
-  for (let c = 0; c < n && r < m; c++) {
-    let pivotRow = -1;
-    for (let i = r; i < m; i++) {
-      if (!A[i][c].isZero()) {
-        pivotRow = i;
-        break;
-      }
-    }
-    if (pivotRow === -1) continue;
-    pivots.push({ row: pivotRow, col: c });
-    r = pivotRow + 1;
-  }
-
-  return pivots;
-}
-
-type SnfViewInfo = {
-  text: string;
-  activeCol: number | null;  // coluna em azul
-  blueRows: number[];        // linhas em verde (alvo)
-  redRows: number[];         // linhas em vermelho (pivô)
-};
-
-function buildSnfViewInfo(description: string): SnfViewInfo {
-  let pivotRow: number | null = null;
-  let pivotCol: number | null = null;
-  let activeCol: number | null = null;
-  let blueRows: number[] = [];
-  let redRows: number[] = [];
-
-  let operacao = "";
-  let linhasTxt = "Linhas / Colunas: –";
-  let resumo = "";
-
-  let m: RegExpMatchArray | null;
-
-  // 0) Casos iniciais / finais simples
-  if (/Matriz vazia/.test(description)) {
-    operacao = "Matriz vazia";
-    resumo = `Resumo: ${description}`;
-  } else if (/Matriz inteira inicial/.test(description)) {
-    operacao = "Matriz inicial";
-    resumo = `Resumo: ${description}`;
-  } else if (/Matriz quase-diagonal obtida/.test(description)) {
-    operacao = "SNF final obtida";
-    resumo = `Resumo: ${description}`;
-  }
-
-  // 1) Troca de linhas: "Troca de linhas rI e rPI ..."
-  if (!operacao) {
-    m = description.match(/Troca de linhas r(\d+) e r(\d+)/);
-    if (m) {
-      const i = Number(m[1]);
-      const pi = Number(m[2]);
-      operacao = "Troca de linhas";
-      linhasTxt = `Linhas: R${i + 1} / R${pi + 1}`;
-      resumo = `Resumo: R${i + 1} ↔ R${pi + 1}`;
-      blueRows = [i];
-      redRows = [pi];
-    }
-  }
-
-  // 2) Troca de colunas: "Troca de colunas cJ e cPJ para posicionar o pivô na coluna j=J."
-  if (!operacao) {
-    m = description.match(
-      /Troca de colunas c(\d+) e c(\d+) para posicionar o pivô na coluna j=(\d+)/
-    );
-    if (m) {
-      const j = Number(m[1]);
-      const pj = Number(m[2]);
-      const jpiv = Number(m[3]);
-      operacao = "Troca de colunas";
-      linhasTxt = `Colunas: C${j + 1} / C${pj + 1}`;
-      resumo = `Resumo: C${j + 1} ↔ C${pj + 1} (pivô na coluna ${jpiv + 1}).`;
-      pivotCol = jpiv;
-      activeCol = jpiv;
-    }
-  }
-
-  // 3) Combinação linear de linhas: "Combinação linear de linhas para reduzir a entrada em (rR, cJ)."
-  if (!operacao) {
-    m = description.match(
-      /Combinação linear de linhas para reduzir a entrada em \(r(\d+), c(\d+)\)/
-    );
-    if (m) {
-      const r = Number(m[1]);
-      const j = Number(m[2]);
-      operacao = "Soma (eliminação por linha)";
-      linhasTxt = `Linhas: envolve R${r + 1} e uma linha pivô`;
-      resumo = `Resumo: combinação de linhas para reduzir a entrada em (${r + 1}, ${j + 1}).`;
-      blueRows = [r];           // linha sendo modificada
-      activeCol = j;            // coluna do elemento que estamos mexendo
-    }
-  }
-
-  // 4) Combinação linear de colunas: "Combinação linear de colunas para reduzir a entrada em (rI, cC)."
-  if (!operacao) {
-    m = description.match(
-      /Combinação linear de colunas para reduzir a entrada em \(r(\d+), c(\d+)\)/
-    );
-    if (m) {
-      const i = Number(m[1]);
-      const c = Number(m[2]);
-      operacao = "Soma (eliminação por coluna)";
-      linhasTxt = `Colunas: envolve C${c + 1} e uma coluna pivô`;
-      resumo = `Resumo: combinação de colunas para reduzir a entrada em (${i + 1}, ${c + 1}).`;
-      blueRows = [i];           // destaco a linha do pivô
-      activeCol = c;            // coluna alvo em azul
-    }
-  }
-
-  // 5) Multiplicação por -1 no pivô: "Multiplicação por -1 para tornar o pivô em (rI, cJ) positivo."
-  if (!operacao) {
-    m = description.match(
-      /Multiplicação por -1 para tornar o pivô em \(r(\d+), c(\d+)\) positivo/
-    );
-    if (m) {
-      const i = Number(m[1]);
-      const j = Number(m[2]);
-      operacao = "Multiplicação por -1 no pivô";
-      linhasTxt = `Linhas: R${i + 1}`;
-      resumo = `Resumo: pivô em (${i + 1}, ${j + 1}) multiplicado por -1 para ficar positivo.`;
-      pivotRow = i;
-      pivotCol = j;
-      blueRows = [i];
-      activeCol = j;
-    }
-  }
-
-  // 6a) Zerando entrada por combinação de LINHAS:
-  // "Zerando a entrada em (rR, cJ) usando o pivô em (rI, cJ)."
-  if (!operacao) {
-    m = description.match(
-      /Zerando a entrada em \(r(\d+), c(\d+)\) usando o pivô em \(r(\d+), c(\d+)\)/
-    );
-    if (m) {
-      const r1 = Number(m[1]);
-      const c1 = Number(m[2]);
-      const r2 = Number(m[3]);
-      const c2 = Number(m[4]);
-
-      if (r1 !== r2) {
-        // eliminação por linha
-        operacao = "Soma (eliminação por linha)";
-        linhasTxt = `Linhas: R${r1 + 1} / R${r2 + 1}`;
-        resumo = `Resumo: zera a entrada em (${r1 + 1}, ${c1 + 1}) usando o pivô em (${r2 + 1}, ${c2 + 1}).`;
-        pivotRow = r2;
-        pivotCol = c2;
-        blueRows = [r1];     // linha que está sendo limpa
-        redRows = [r2];      // linha pivô
-        activeCol = c2;
-      } else {
-        // eliminação por coluna: "Zerando (rI, cC) usando pivô em (rI, cJ)."
-        operacao = "Soma (eliminação por coluna)";
-        linhasTxt = `Colunas: C${c1 + 1} / C${c2 + 1}`;
-        resumo = `Resumo: zera a entrada em (${r1 + 1}, ${c1 + 1}) usando o pivô em (${r2 + 1}, ${c2 + 1}).`;
-        pivotRow = r1;
-        pivotCol = c2;
-        blueRows = [r1];     // linha do pivô
-        redRows = [];
-        activeCol = c1;      // coluna que está sendo zerada
-      }
-    }
-  }
-
-  // fallback
-  if (!operacao) {
-    operacao = description;
-    resumo = `Resumo: ${description}`;
-  }
-
-  const pivotLine = `Pivot: (${
-    pivotRow != null ? pivotRow + 1 : "–"
-  }, ${pivotCol != null ? pivotCol + 1 : "–"})`;
-
-  const text =
-    pivotLine +
-    "\n" +
-    `Operação: ${operacao}` +
-    "\n" +
-    linhasTxt +
-    "\n" +
-    resumo;
-
-  return { text, activeCol, blueRows, redRows };
-}
-
-type SnfStepInfo = {
-  pivotRow: number | null;   // índice 0-based
-  pivotCol: number | null;   // índice 0-based
-  operacao: string;
-  linhas: string;
-  resumo: string;
-  blueRows: number[];        // linhas “alteradas” (verde)
-  redRows: number[];         // linhas auxiliares (vermelho)
-  activeCol: number | null;  // coluna destacada (azul)
-};
-function parseSnfStepInfo(description: string): SnfStepInfo {
-  let pivotRow: number | null = null;
-  let pivotCol: number | null = null;
-  let operacao = "";
-  let linhas = "Linhas: —";
-  let resumo = "";
-  let blueRows: number[] = [];
-  let redRows: number[] = [];
-  let activeCol: number | null = null;
-
-  let m: RegExpMatchArray | null;
-
-  // -------------------------------------------------
-  // Troca de LINHAS   (ex: "Troca de linhas r8 e r9")
-  // -------------------------------------------------
-  m = description.match(/Troca de linhas r(\d+)\s*e\s*r(\d+)/i);
-  if (m) {
-    const r1 = Number(m[1]);
-    const r2 = Number(m[2]);
-    operacao = "Troca de linhas";
-    linhas = `Linhas: R${r1 + 1} / R${r2 + 1}`;
-    resumo = `Resumo: R${r1 + 1} ↔ R${r2 + 1}`;
-    blueRows = [r1];
-    redRows = [r2];
-
-    // SNF normalmente trabalha na diagonal: aproximamos o pivô
-    const base = Math.min(r1, r2);
-    pivotRow = base;
-    pivotCol = base;
-  }
-
-  // -------------------------------------------------
-  // Troca de COLUNAS  (ex: "Troca de colunas c1 e c2")
-  // -------------------------------------------------
-  if (!operacao && /Troca de colunas/i.test(description)) {
-    m = description.match(/c(\d+)[^\d]+c(\d+)/i);
-    const c1 = m ? Number(m[1]) : 0;
-    const c2 = m ? Number(m[2]) : 1;
-    const j = Math.min(c1, c2);
-
-    operacao = "Troca de colunas";
-    linhas = `Colunas: C${c1 + 1} / C${c2 + 1}`;
-    resumo = `Resumo: troca de colunas para reposicionar o pivô na coluna ${j + 1}.`;
-
-    // agora supomos que o pivô fica na diagonal (j,j)
-    pivotRow = j;
-    pivotCol = j;
-    activeCol = j;
-  }
-
-  // -------------------------------------------------
-  // Eliminação completa na COLUNA
-  //  ex: "Eliminação completa na coluna j=7: zera (r11,c7) usando a linha r8."
-  // -------------------------------------------------
-  if (!operacao) {
-    m = description.match(
-      /Eliminação completa na coluna j=(\d+): zera \(r(\d+),\s*c(\d+)\) usando a linha r(\d+)/i
-    );
-    if (m) {
-      const j = Number(m[1]);      // coluna do pivô
-      const rTarget = Number(m[2]); // linha zerada
-      const c = Number(m[3]);      // deve coincidir com j
-      const rPivot = Number(m[4]); // linha pivô
-
-      pivotRow = rPivot;
-      pivotCol = j;
-
-      operacao = "Soma (eliminação por linha)";
-      linhas = `Linhas: R${rTarget + 1} / R${rPivot + 1}`;
-      resumo =
-        `Resumo: eliminação completa na coluna ${j + 1}, ` +
-        `zerando a entrada em (${rTarget + 1}, ${c + 1}) usando R${rPivot + 1}.`;
-
-      blueRows = [rTarget];
-      redRows = [rPivot];
-      activeCol = j;
-    }
-  }
-
-  // -------------------------------------------------
-  // Eliminação completa na LINHA
-  //  ex: "Eliminação completa na linha r=7: zera (r7,c8) usando a coluna c3."
-  // -------------------------------------------------
-  if (!operacao) {
-    m = description.match(
-      /Eliminação completa na linha r=(\d+): zera \(r(\d+),\s*c(\d+)\) usando a coluna c(\d+)/i
-    );
-    if (m) {
-      const rPivot = Number(m[1]); // linha do pivô
-      const r = Number(m[2]);      // deve coincidir com rPivot
-      const cTarget = Number(m[3]); // coluna zerada
-      const j = Number(m[4]);      // coluna do pivô
-
-      pivotRow = rPivot;
-      pivotCol = j;
-
-      operacao = "Soma (eliminação por coluna)";
-      linhas = `Colunas: C${j + 1} / C${cTarget + 1}`;
-      resumo =
-        `Resumo: eliminação completa na linha ${rPivot + 1}, ` +
-        `zerando a entrada em (${r + 1}, ${cTarget + 1}) usando a coluna C${j + 1}.`;
-
-      blueRows = [rPivot];
-      activeCol = j;
-    }
-  }
-
-  // -------------------------------------------------
-  // Combinação linear nas LINHAS rI e rR
-  // -------------------------------------------------
-  if (!operacao) {
-    m = description.match(/Combinação(?: linear)? nas linhas r(\d+)\s*e\s*r(\d+)/i);
-    if (m) {
-      const i = Number(m[1]);    // linha pivô
-      const r = Number(m[2]);    // linha alterada
-      const m2 = description.match(/\(r(\d+),\s*c(\d+)\)/i);
-
-      const rTarget = m2 ? Number(m2[1]) : r;
-      const c = m2 ? Number(m2[2]) : 0;
-
-      pivotRow = i;
-      pivotCol = c;
-
-      operacao = "Soma (eliminação por linha)";
-      linhas = `Linhas: R${r + 1} / R${i + 1}`;
-      resumo = `Resumo: ${description}`;
-
-      blueRows = [rTarget];
-      redRows = [i];
-      activeCol = c;
-    }
-  }
-
-  // -------------------------------------------------
-  // Combinação linear nas COLUNAS cJ e cC
-  // -------------------------------------------------
-  if (!operacao) {
-    m = description.match(/Combinação(?: linear)? nas colunas c(\d+)\s*e\s*c(\d+)/i);
-    if (m) {
-      const j = Number(m[1]); // coluna pivô
-      const c = Number(m[2]); // coluna alterada
-      const m2 = description.match(/\(r(\d+),\s*c(\d+)\)/i);
-      const r = m2 ? Number(m2[1]) : 0;
-      const cTarget = m2 ? Number(m2[2]) : c;
-
-      pivotRow = r;
-      pivotCol = j;
-
-      operacao = "Soma (eliminação por coluna)";
-      linhas = `Colunas: C${j + 1} / C${c + 1}`;
-      resumo = `Resumo: ${description}`;
-
-      activeCol = j;
-    }
-  }
-
-  // -------------------------------------------------
-  // Combinação genérica de LINHAS
-  // -------------------------------------------------
-  if (!operacao) {
-    m = description.match(/Combinação linear de linhas.*\(r(\d+),\s*c(\d+)\)/i);
-    if (m) {
-      const r = Number(m[1]);
-      const c = Number(m[2]);
-      pivotRow = r;
-      pivotCol = c;
-      operacao = "Soma (eliminação por linha)";
-      linhas = `Linhas: envolve R${r + 1} e uma linha pivô`;
-      resumo = `Resumo: ${description}`;
-      blueRows = [r];
-      activeCol = c;
-    }
-  }
-
-  // -------------------------------------------------
-  // Combinação genérica de COLUNAS
-  // -------------------------------------------------
-  if (!operacao) {
-    m = description.match(/Combinação linear de colunas.*\(r(\d+),\s*c(\d+)\)/i);
-    if (m) {
-      const r = Number(m[1]);
-      const c = Number(m[2]);
-      pivotRow = r;
-      pivotCol = c;
-      operacao = "Soma (eliminação por coluna)";
-      linhas = `Colunas: envolve C${c + 1} e uma coluna pivô`;
-      resumo = `Resumo: ${description}`;
-      blueRows = [r];
-      activeCol = c;
-    }
-  }
-
-  // -------------------------------------------------
-  // Multiplicação por -1 para tornar o pivô não negativo
-  // -------------------------------------------------
-  if (!operacao) {
-    m = description.match(
-      /Multiplicação da linha r(\d+) por -1 para tornar o pivô não negativo/i
-    );
-    if (m) {
-      const r = Number(m[1]);
-      pivotRow = r;
-      pivotCol = r;
-      operacao = "Multiplicação por -1 no pivô";
-      linhas = `Linhas: R${r + 1}`;
-      resumo = `Resumo: ${description}`;
-      blueRows = [r];
-      activeCol = r;
-    }
-  }
-
-  // -------------------------------------------------
-  // Zerando a entrada em (rR, cC) usando o pivô em ...
-  // -------------------------------------------------
-  if (!operacao) {
-    m = description.match(
-      /Zerando a entrada em \(r(\d+),\s*c(\d+)\).*pivô em \(r(\d+),\s*c(\d+)\)/i
-    );
-    if (m) {
-      const r1 = Number(m[1]);
-      const c1 = Number(m[2]);
-      const r2 = Number(m[3]);
-      const c2 = Number(m[4]);
-      pivotRow = r2;
-      pivotCol = c2;
-
-      if (r1 !== r2) {
-        operacao = "Soma (eliminação por linha)";
-        linhas = `Linhas: R${r1 + 1} / R${r2 + 1}`;
-        resumo = `Resumo: ${description}`;
-        blueRows = [r1];
-        redRows = [r2];
-        activeCol = c1;
-      } else {
-        operacao = "Soma (eliminação por coluna)";
-        linhas = `Colunas: C${c1 + 1} / C${c2 + 1}`;
-        resumo = `Resumo: ${description}`;
-        blueRows = [r1];
-        activeCol = c1;
-      }
-    }
-  }
-
-  // -------------------------------------------------
-  // Casos finais genéricos (quase-diagonal / vazia)
-  // -------------------------------------------------
-  if (!operacao) {
-    if (/Matriz quase-diagonal obtida/i.test(description)) {
-      operacao = "SNF final obtida";
-      resumo = `Resumo: ${description}`;
-    } else if (/Matriz vazia/i.test(description)) {
-      operacao = "Matriz vazia";
-      resumo = `Resumo: ${description}`;
-    } else {
-      operacao = description;
-      resumo = `Resumo: ${description}`;
-    }
-  }
-
-  // =================================================
-  // FALLBACK: se ainda não temos cor/pivô decentes,
-  // tenta deduzir rX e cY do texto.
-  // =================================================
-  const rAll: number[] = [];
-  const rRegex = /r(\d+)/gi;
-  let rm: RegExpExecArray | null;
-  while ((rm = rRegex.exec(description)) !== null) {
-    rAll.push(Number(rm[1]));
-  }
-
-  if (blueRows.length === 0 && redRows.length === 0) {
-    if (
-      rAll.length >= 2 &&
-      (/linha/i.test(operacao) || /linha/i.test(description))
-    ) {
-      blueRows = [rAll[0]];
-      redRows = [rAll[1]];
-    } else if (
-      rAll.length >= 1 &&
-      (/linha/i.test(operacao) || /linha/i.test(description))
-    ) {
-      blueRows = [rAll[0]];
-    }
-  }
-
-  if (activeCol == null) {
-    const cMatch = description.match(/c(\d+)/i);
-    if (cMatch) {
-      activeCol = Number(cMatch[1]);
-    }
-  }
-
-  // se ainda não temos pivot, chuta a partir das infos acima
-  if (pivotRow == null && blueRows.length > 0) {
-    pivotRow = blueRows[0];
-  } else if (pivotRow == null && rAll.length > 0) {
-    pivotRow = rAll[0];
-  }
-  if (pivotCol == null && activeCol != null) {
-    pivotCol = activeCol;
-  }
-
-  return {
-    pivotRow,
-    pivotCol,
-    operacao,
-    linhas,
-    resumo,
-    blueRows,
-    redRows,
-    activeCol,
-  };
-}
-
-
-
-
-
-function formatSnfOp(desc: string): string {
-  const info = parseSnfStepInfo(desc);
-  const pr = info.pivotRow != null ? info.pivotRow + 1 : "-";
-  const pc = info.pivotCol != null ? info.pivotCol + 1 : "-";
-
-  return [
-    `Pivot: (${pr}, ${pc})`,
-    `Operação: ${info.operacao}`,
-    info.linhas,
-    info.resumo,
-  ].join("\n");
-}
-
-
 
 
   // ----------------- JSX -----------------
@@ -3278,19 +1360,21 @@ return (
             </div>
           </div>
 
-          {space === "rp2" && (
-            <div className="mt-3 text-xs text-gray-700">
-              <label className="inline-flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  className="rounded border-gray-300"
-                  checked={rp2Decomp}
-                  onChange={(e) => setRp2Decomp(e.target.checked)}
-                />
-                <span>Highlight RP² as Möbius strip + disk</span>
-              </label>
-            </div>
-          )}
+      {space === "rp2" && (
+        <div className="mt-3 text-xs text-gray-700 space-y-2">
+          {/* Existing checkbox: shading of Möbius+disk decomposition */}
+          <label className="inline-flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="rounded border-gray-300"
+              checked={rp2Decomp}
+              onChange={(e) => setRp2Decomp(e.target.checked)}
+            />
+            <span>Highlight RP² as Möbius strip + disk</span>
+          </label>
+        </div>
+      )}
+
         </div>
 
         {/* Botões do pipeline */}
@@ -3366,43 +1450,492 @@ return (
         </div>
       </div>
 
-      {/* PRÉVIA DOS TRIÂNGULOS E SVG - SEMPRE JUNTOS */}
-      <div className="grid md:grid-cols-2 gap-4 mb-4">
-        <Section title="Triangles preview (first 40)">
-          {trianglesPreview.length === 0 ? (
-            <div className="text-sm text-gray-600">(none yet)</div>
-          ) : (
-            <div className="grid grid-cols-1 gap-2 text-sm max-h-[400px] overflow-auto">
-              {trianglesPreview.map((t: any, i: number) => (
-                <div key={i} className="px-2 py-1 rounded-lg bg-gray-50 border">
-                  Tri{i}: ({t.join(", ")})
-                </div>
-              ))}
-            </div>
-          )}
-        </Section>
+     {/* PRÉVIA DOS TRIÂNGULOS E SVG - SEMPRE JUNTOS */}
+    <div className="grid md:grid-cols-2 gap-4 mb-4">
+      <Section title="Triangles preview (first 40)">
+        {/* NOVO: construção passo a passo da triangulação */}
+        <div className="mb-3 text-xs text-gray-700 space-y-2">
+          <div className="font-semibold">Build triangulation step-by-step</div>
 
-          {faces.length ? (
-            <div className="w-full">
+          {c2Simplices.length === 0 ? (
+            <div className="text-gray-500">
+              (click <b>1) Triangulate</b> above to build the complex)
+            </div>
+          ) : (
+            <>
+              {/* buttons */}
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50 disabled:opacity-40"
+                  onClick={triBuildPrev}
+                  disabled={triBuildStep <= 0}
+                >
+                  ◀ Prev
+                </button>
+                <button
+                  className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50 disabled:opacity-40"
+                  onClick={triBuildNext}
+                  disabled={
+                    triBuildStep >= c1Simplices.length + c2Simplices.length
+                  }
+                >
+                  Next ▶
+                </button>
+
+                {/* build whole triangulation at once */}
+                <button
+                  className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50 disabled:opacity-40"
+                  onClick={triBuildAll}
+                  disabled={c1Simplices.length + c2Simplices.length === 0}
+                >
+                  Build all
+                </button>
+
+                <button
+                  className="px-2 py-1 rounded border text-[11px] hover:bg-gray-50"
+                  onClick={triBuildReset}
+                >
+                  Reset to C₀
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* lista de triângulos com HIGHLIGHT AZUL */}
+        {trianglesPreview.length === 0 ? (
+          <div className="text-sm text-gray-600">(none yet)</div>
+        ) : (
+          <div className="grid grid-cols-1 gap-2 text-sm max-h-[400px] overflow-auto">
+            {(() => {
+              // --- triangle of the CURRENT C2 STEP ---
+              const stepIndex =
+                triBuildStep > c1Simplices.length
+                  ? triBuildStep - c1Simplices.length - 1
+                  : -1;
+
+              const stepTri =
+                stepIndex >= 0 && stepIndex < c2Simplices.length
+                  ? c2Simplices[stepIndex]
+                  : null;
+
+              // compare triangles ignoring vertex order
+              const sameTriangle = (a: number[], b: number[] | null) => {
+                if (!a || !b) return false;
+                if (a.length !== b.length) return false;
+                const A = [...a].sort((x, y) => x - y);
+                const B = [...b].sort((x, y) => x - y);
+                return A.every((v, idx) => v === B[idx]);
+              };
+
+              return trianglesPreview.map((t: number[], i: number) => {
+                const isHighlighted = sameTriangle(t, stepTri);
+
+                return (
+                  <div
+                    key={i}
+                    className={
+                      "px-2 py-1 rounded-lg border text-sm transition-colors " +
+                      (isHighlighted
+                        ? "border-blue-700 font-semibold text-blue-900"
+                        : "border-gray-200 text-gray-900")
+                    }
+                    style={{
+                      backgroundColor: isHighlighted ? "#bfdbfe" : "#f9fafb", // blue-200 vs gray-50
+                    }}
+                  >
+                    Tri{i}: ({t.join(", ")})
+                  </div>
+                );
+              });
+            })()}
+          </div>
+        )}
+      </Section>
+
+    {faces.length ? (
+      <div className="w-full">
+        {/* Toggle directly above the main SVG */}
+        {space === "rp2" && (
+          <div className="flex justify-end mb-1 text-[11px] text-gray-700">
+            <button
+              type="button"
+              onClick={() => setShowMobiusLoop((v) => !v)}
+              className="px-2 py-1 rounded border bg-white hover:bg-indigo-50"
+            >
+              {showMobiusLoop
+                ? "Hide Möbius boundary loop"
+                : "Show Möbius boundary loop"}
+            </button>
+          </div>
+        )}
+
+        <TriangulationView
+          space={space}
+          m={m}
+          n={n}
+          faces={drawFaces as number[][]}
+          selectedSimplex={selectedSimplex}
+          rp2Decomp={rp2Decomp}
+          rp2PartView="full"
+          highlightEdges={space === "rp2" ? rp2HighlightedEdges : []}
+          manualEdges={drawEdges}
+          coloredEdges={
+            space === "rp2" && showMobiusLoop ? mobiusColoredEdges : undefined
+          }
+          orientedEdges={
+            space === "rp2" && showMobiusLoop ? mobiusOrientedEdges : undefined
+          }
+        />
+
+        <div className="text-xs text-gray-900 mt-2">
+          <strong>💡 Dica:</strong> Clique nos simplexes nas seções abaixo para
+          destacá-los aqui!
+        </div>
+      </div>
+    ) : (
+        <div className="text-sm text-gray-600">
+          (triangulate first to see the complex)
+        </div>
+      )}
+    </div>
+    
+
+{/* RP² unfolding BELOW the triangulation */}
+{space === "rp2" && (
+  <Section title="RP² as disk + Möbius strip">
+    {/* Toggle for colorful Möbius boundary edges */}
+    <div className="flex justify-end mb-2 text-[11px] text-gray-700">
+      <button
+        type="button"
+        onClick={() => {
+          if (faces.length === 0) return; // nothing to toggle yet
+          setShowMobiusLoop((v) => !v);
+        }}
+        disabled={faces.length === 0}
+        className={
+          "px-2 py-1 rounded border bg-white hover:bg-indigo-50 " +
+          (faces.length === 0 ? "opacity-50 cursor-not-allowed" : "")
+        }
+      >
+        {faces.length === 0
+          ? "Triangulate RP² to highlight loop"
+          : showMobiusLoop
+          ? "Hide Möbius boundary loop"
+          : "Show Möbius boundary loop"}
+      </button>
+    </div>
+
+    {/* whole content of the RP² decomposition */}
+    <div className="space-y-4 text-xs">
+      {/* ================= MÖBIUS STRIP BLOCK ================= */}
+      <div className="space-y-2">
+        <div className="font-semibold text-gray-700 text-center">
+          Möbius strip
+        </div>
+
+        {/* 2D triangulation + 3D ant */}
+        <div className="border rounded-lg overflow-hidden bg-white">
+          <div className="grid md:grid-cols-2 gap-0 h-72">
+            {/* 2D triangulation (left) */}
+            <div className="border-r">
               <TriangulationView
-                space={space}
+                space="rp2"
                 m={m}
                 n={n}
-                faces={faces as number[][]}
-                selectedSimplex={selectedSimplex}
-                rp2Decomp={rp2Decomp}
-                highlightEdges={space === "rp2" ? rp2HighlightedEdges : []}
+                faces={rp2MobiusFaces as number[][]}
+                selectedSimplex={null}
+                rp2Decomp={false}
+                rp2PartView="full"
+                coloredEdges={showMobiusLoop ? mobiusColoredEdges : undefined}
+                orientedEdges={showMobiusLoop ? mobiusOrientedEdges : undefined}
+                mobiusParam={mobiusT}
               />
-              <div className="text-xs text-gray-900 mt-2">
-                <strong>💡 Dica:</strong> Clique nos simplexes nas seções abaixo para destacá-los aqui!
-              </div>
             </div>
-          ) : (
-            <div className="text-sm text-gray-600">
-              (triangulate first to see the complex)
+
+            {/* 3D Möbius + ant (right) */}
+            <div className="h-full">
+              <MobiusAntDemo t={mobiusT} followAnt={followAnt} />
             </div>
-          )}
+
+          </div>
+
+
+          {/* controls under both views */}
+          <div className="px-3 py-2 border-t bg-slate-50 flex flex-wrap items-center gap-3 text-xs">
+            <span className="whitespace-nowrap">Ant position</span>
+
+            <input
+              type="range"
+              min={0}
+              max={1000}
+              value={Math.round(mobiusT * 1000)}
+              onChange={(e) => {
+                const v = parseInt(e.target.value, 10) / 1000;
+                setMobiusT(v);
+              }}
+              className="flex-1 min-w-[120px]"
+            />
+
+            <button
+              type="button"
+              className="px-2 py-1 border rounded text-[11px]"
+              onClick={() => setMobiusPlaying((p) => !p)}
+            >
+              {mobiusPlaying ? "Pause" : "Play"}
+            </button>
+
+            <button
+              type="button"
+              className="px-2 py-1 border rounded text-[11px]"
+              onClick={() => {
+                setMobiusPlaying(false);
+                setMobiusT(0);
+              }}
+            >
+              Reset
+            </button>
+
+            {/* speed buttons */}
+            <div className="flex items-center gap-1">
+              <span>Speed:</span>
+              <button
+                type="button"
+                className={
+                  "px-2 py-1 border rounded text-[11px]" +
+                  (mobiusSpeed === 0.5 ? " bg-blue-500 text-white" : "")
+                }
+                onClick={() => setMobiusSpeed(0.5)}
+              >
+                0.5x
+              </button>
+              <button
+                type="button"
+                className={
+                  "px-2 py-1 border rounded text-[11px]" +
+                  (mobiusSpeed === 1 ? " bg-blue-500 text-white" : "")
+                }
+                onClick={() => setMobiusSpeed(1)}
+              >
+                1x
+              </button>
+
+              <button
+                type="button"
+                className="px-2 py-1 border rounded text-[11px]"
+                onClick={() => setFollowAnt((v) => !v)}
+              >
+                {followAnt ? "Stop follow" : "Follow ant"}
+              </button>
+
+            </div>
+          </div>
+        </div>
+
+        {/* Square-with-arrows model */}
+        <div className="border rounded-lg bg-white p-2">
+          <div className="text-center font-semibold mb-1 text-[11px]">
+            Square model (glued pair vs boundary)
+          </div>
+          <svg viewBox="0 0 120 80" width="100%" height="80">
+            {/* square */}
+            <rect
+              x="10"
+              y="10"
+              width="100"
+              height="60"
+              fill="#eff6ff"
+              stroke="#111827"
+              strokeWidth="1.5"
+            />
+
+            {/* Edges color-coded to 0-1-2-4-0 ↔ A-B-C-D-A */}
+            {/* top: AB ~ 0-1 (boundary) */}
+            <line
+              x1="10"
+              y1="10"
+              x2="110"
+              y2="10"
+              stroke={mobiusEdgeColors[0]} // red
+              strokeWidth="3"
+            />
+            {/* right: BC ~ 1-2 (GLUED) */}
+            <line
+              x1="110"
+              y1="10"
+              x2="110"
+              y2="70"
+              stroke={mobiusEdgeColors[1]} // green
+              strokeWidth="3"
+            />
+            {/* bottom: CD ~ 2-4 (boundary) */}
+            <line
+              x1="110"
+              y1="70"
+              x2="10"
+              y2="70"
+              stroke={mobiusEdgeColors[2]} // blue
+              strokeWidth="3"
+            />
+            {/* left: DA ~ 4-0 (GLUED) */}
+            <line
+              x1="10"
+              y1="70"
+              x2="10"
+              y2="10"
+              stroke={mobiusEdgeColors[3]} // purple
+              strokeWidth="3"
+            />
+
+            {/* arrow marker for glued edges */}
+            <defs>
+              <marker
+                id="mobius-arrow"
+                viewBox="0 0 10 10"
+                refX="10"
+                refY="5"
+                markerWidth="5"
+                markerHeight="5"
+                orient="auto"
+                markerUnits="strokeWidth"
+              >
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#111827" />
+              </marker>
+            </defs>
+
+            {/* glued pair BC and AD with OPPOSITE orientation */}
+            <line
+              x1="110"
+              y1="18"
+              x2="110"
+              y2="62"
+              stroke="#111827"
+              strokeWidth="1.5"
+              markerEnd="url(#mobius-arrow)"
+            />
+            <line
+              x1="10"
+              y1="62"
+              x2="10"
+              y2="18"
+              stroke="#111827"
+              strokeWidth="1.5"
+              markerEnd="url(#mobius-arrow)"
+            />
+
+            {/* boundary arrows on AB and CD */}
+            <line
+              x1="30"
+              y1="14"
+              x2="90"
+              y2="14"
+              stroke="#9ca3af"
+              strokeWidth="1"
+              markerEnd="url(#mobius-arrow)"
+            />
+            <line
+              x1="90"
+              y1="66"
+              x2="30"
+              y2="66"
+              stroke="#9ca3af"
+              strokeWidth="1"
+              markerEnd="url(#mobius-arrow)"
+            />
+
+            {/* vertex labels: map A,B,C,D ↔ 0,1,2,4 */}
+            <text x="6" y="8" fontSize="8" fill="#111827">
+              A(0)
+            </text>
+            <text x="112" y="8" fontSize="8" fill="#111827" textAnchor="end">
+              B(1)
+            </text>
+            <text x="112" y="78" fontSize="8" fill="#111827" textAnchor="end">
+              C(2)
+            </text>
+            <text x="6" y="78" fontSize="8" fill="#111827">
+              D(4)
+            </text>
+          </svg>
+
+          <div className="mt-1 text-[10px] text-gray-600">
+            Colors match the boundary loop 0→1→2→4→0 in the cut Möbius strip.
+            The pair <b>BC</b> and <b>AD</b> (green &amp; purple) is glued with
+            opposite arrows — this is the twist. The pair <b>AB</b> and{" "}
+            <b>CD</b> (red &amp; blue) remains boundary.
+          </div>
+        </div>
       </div>
+
+      {/* ================= DISK BLOCK ================= */}
+      <div className="space-y-2">
+        <div className="font-semibold text-gray-700 text-center">
+          Disk
+        </div>
+
+        {/* Disk triangulation */}
+        <div className="border rounded-lg overflow-hidden bg-white">
+          <TriangulationView
+            space="rp2"
+            m={m}
+            n={n}
+            faces={rp2DiskFaces as number[][]}
+            selectedSimplex={null}
+            rp2Decomp={false}
+            rp2PartView="full"
+          />
+        </div>
+
+        {/* Round disk model */}
+        <div className="border rounded-lg bg-white p-2">
+          <div className="text-center font-semibold mb-1 text-[11px]">
+            Disk model
+          </div>
+          <svg viewBox="0 0 80 80" width="100%" height="80">
+            <circle
+              cx="40"
+              cy="40"
+              r="26"
+              fill="#e0f2fe"
+              stroke="#0f172a"
+              strokeWidth="1.5"
+            />
+            {/* boundary arrow */}
+            <path
+              d="M 14 40 A 26 26 0 0 1 40 14"
+              fill="none"
+              stroke="#1d4ed8"
+              strokeWidth="2"
+              markerEnd="url(#arrow-blue-disk)"
+            />
+            <defs>
+              <marker
+                id="arrow-blue-disk"
+                viewBox="0 0 10 10"
+                refX="10"
+                refY="5"
+                markerWidth="5"
+                markerHeight="5"
+                orient="auto"
+                markerUnits="strokeWidth"
+              >
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#1d4ed8" />
+              </marker>
+            </defs>
+          </svg>
+        </div>
+      </div>
+    </div>
+
+    <div className="mt-2 text-[11px] text-gray-600">
+      Here RP² is shown as the union of a disk and a Möbius strip; each middle
+      panel shows the triangulated piece and, below, its classical geometric
+      model (square with opposite edges for the strip, round disk for the cap).
+    </div>
+  </Section>
+)}
+
+
 
       {/* CADEIAS - Pode ser fixado com SVG */}
       {chainsWithSVG ? (
@@ -4498,15 +3031,17 @@ return (
               : [];
 
             return (
-              <MatrixViewFrac
-                M={Mfrac}
-                rows={d2.rows}
-                cols={d2.cols}
-                activeCol={info ? info.activeCol : null}
-                blueRows={info ? info.blueRows : []}
-                redRows={info ? info.redRows : []}
-                pivotCells={pivotCells}
-              />
+            <MatrixViewFrac
+              M={Mfrac}
+              rows={d2.rows}
+              cols={d2.cols}
+              activeCol={info ? info.activeCol : null}
+              blueRows={info ? info.blueRows : []}
+              redRows={info ? info.redRows : []}
+              blueCols={info ? info.blueCols : []}
+              redCols={info ? info.redCols : []}
+              pivotCells={pivotCells}
+            />
             );
 
           })()
