@@ -9,6 +9,8 @@ export type MobiusAntDemoProps = {
   t: number;
   /** If true, the camera gently moves following the ant. */
   followAnt?: boolean;
+ /** Boundary parameter in [0,1] for a point on the Möbius boundary. */
+ boundaryT?: number;
 };
 
 // 50% smaller than before
@@ -165,6 +167,47 @@ function AntOnMobius({ t }: AntOnMobiusProps) {
     </mesh>
   );
 }
+
+// =======================
+//  Dot running along the boundary loop (s = 1)
+// =======================
+
+function BoundaryDot({ boundaryT }: { boundaryT: number }) {
+  const ref = useRef<THREE.Mesh>(null!);
+  const pos = useRef(new THREE.Vector3()).current;
+  const n = useRef(new THREE.Vector3()).current;
+
+  useFrame(() => {
+    if (!ref.current) return;
+
+    const R = 1.4;
+    const W = 0.5;
+
+    // single lap: u = 2π * boundaryT
+    const u = 2 * Math.PI * boundaryT;
+
+    // take a point on the boundary (s = 1)
+    pos.copy(mobiusPoint(u, 1.0, R, W));
+    n.copy(mobiusSurfaceNormal(u, 1.0, R, W));
+
+    const offset = BALL_RADIUS * 1.05;
+    pos.addScaledVector(n, offset);
+
+    ref.current.position.copy(pos);
+  });
+
+  return (
+    <mesh ref={ref}>
+      <sphereGeometry args={[BALL_RADIUS * 0.7, 32, 32]} />
+      <meshStandardMaterial
+        color="#f97316"        // orange
+        emissive="#c2410c"
+        emissiveIntensity={0.9}
+      />
+    </mesh>
+  );
+}
+
 
 // =======================
 //  Start marker (t = 0 midline, same normal & offset)

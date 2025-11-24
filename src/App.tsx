@@ -250,7 +250,7 @@ export default function App() {
   const [d2VisibleCols, setD2VisibleCols] = useState(0);
   const [d1VisibleCols, setD1VisibleCols] = useState(0);
 
-  const [showMobiusLoop, setShowMobiusLoop] = useState<boolean>(true);
+  const [showMobiusLoop, setShowMobiusLoop] = useState<boolean>(false);
 
     // toggles for side-by-side view with SVG
   const [chainsWithSVG, setChainsWithSVG] = useState(false);
@@ -1867,71 +1867,96 @@ return (
         </div>
       </div>
 
-      {/* ================= DISK BLOCK ================= */}
+          {/* ================= DISK BLOCK ================= */}
       <div className="space-y-2">
         <div className="font-semibold text-gray-700 text-center">
           Disk
         </div>
 
-        {/* Disk triangulation */}
-        <div className="border rounded-lg overflow-hidden bg-white">
-          <TriangulationView
-            space="rp2"
-            m={m}
-            n={n}
-            faces={rp2DiskFaces as number[][]}
-            selectedSimplex={null}
-            rp2Decomp={false}
-            rp2PartView="full"
-          />
-        </div>
-
-        {/* Round disk model */}
-        <div className="border rounded-lg bg-white p-2">
-          <div className="text-center font-semibold mb-1 text-[11px]">
-            Disk model
+        {/* triangulação do disco (esquerda) + modelo redondo (direita) */}
+        <div className="grid md:grid-cols-2 gap-3 items-stretch">
+          {/* LEFT: disk triangulation */}
+          <div className="border rounded-lg overflow-hidden bg-white">
+            <TriangulationView
+              space="rp2"
+              m={m}
+              n={n}
+              faces={rp2DiskFaces as number[][]}
+              selectedSimplex={null}
+              rp2Decomp={false}
+              rp2PartView="full"
+              coloredEdges={showMobiusLoop ? mobiusColoredEdges : undefined}
+              orientedEdges={showMobiusLoop ? mobiusOrientedEdges : undefined}
+            />
           </div>
-          <svg viewBox="0 0 80 80" width="100%" height="80">
-            <circle
-              cx="40"
-              cy="40"
-              r="26"
-              fill="#e0f2fe"
-              stroke="#0f172a"
-              strokeWidth="1.5"
-            />
-            {/* boundary arrow */}
-            <path
-              d="M 14 40 A 26 26 0 0 1 40 14"
-              fill="none"
-              stroke="#1d4ed8"
-              strokeWidth="2"
-              markerEnd="url(#arrow-blue-disk)"
-            />
-            <defs>
-              <marker
-                id="arrow-blue-disk"
-                viewBox="0 0 10 10"
-                refX="10"
-                refY="5"
-                markerWidth="5"
-                markerHeight="5"
-                orient="auto"
-                markerUnits="strokeWidth"
-              >
-                <path d="M 0 0 L 10 5 L 0 10 z" fill="#1d4ed8" />
-              </marker>
-            </defs>
-          </svg>
+
+          {/* RIGHT: round disk model + explanation */}
+          <div className="border rounded-lg bg-white p-2">
+            <div className="text-center font-semibold mb-1 text-[11px]">
+              Disk model
+            </div>
+
+            {/* SVG do disco à esquerda e texto à direita */}
+            <div className="flex items-start gap-3">
+              {/* disk drawing */}
+              <div className="flex-shrink-0">
+                <svg viewBox="0 0 80 80" width="80" height="80">
+                  <circle
+                    cx="40"
+                    cy="40"
+                    r="26"
+                    fill="#e0f2fe"
+                    stroke="#0f172a"
+                    strokeWidth="1.5"
+                  />
+                  <path
+                    d="M 14 40 A 26 26 0 0 1 40 14"
+                    fill="none"
+                    stroke="#1d4ed8"
+                    strokeWidth="2"
+                    markerEnd="url(#arrow-blue-disk)"
+                  />
+                  <defs>
+                    <marker
+                      id="arrow-blue-disk"
+                      viewBox="0 0 10 10"
+                      refX="10"
+                      refY="5"
+                      markerWidth="5"
+                      markerHeight="5"
+                      orient="auto"
+                      markerUnits="strokeWidth"
+                    >
+                      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1d4ed8" />
+                    </marker>
+                  </defs>
+                </svg>
+              </div>
+
+              {/* explanation */}
+              <div className="text-[11px] leading-snug text-gray-700">
+                <div className="font-semibold mb-1">
+                  How the disk completes{" "}
+                  <InlineMath math="\\mathbb{RP}^2" />
+                </div>
+                <p>
+                  The coloured boundary circle of the Möbius strip is the same
+                  circle drawn here: each arc corresponds to one edge in the
+                  loop <b>0→1→2→4→0</b> of the cut square.
+                </p>
+                <p className="mt-1">
+                  When we glue this round disk along that circle, matching the
+                  colours, we cap off the Möbius strip. The resulting closed
+                  surface is the projective plane{" "}
+                  <InlineMath math="\\mathbb{RP}^2" />.
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
-    </div>
+     </div>
 
-    <div className="mt-2 text-[11px] text-gray-600">
-      Here RP² is shown as the union of a disk and a Möbius strip; each middle
-      panel shows the triangulated piece and, below, its classical geometric
-      model (square with opposite edges for the strip, round disk for the cap).
-    </div>
   </Section>
 )}
 
