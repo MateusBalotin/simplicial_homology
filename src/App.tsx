@@ -2,6 +2,7 @@ import React, { useMemo, useState, useEffect } from "react";
 import "katex/dist/katex.min.css";
 import { InlineMath } from "react-katex";
 import { DiskAntDemo } from "./components/DiskAntDemo";
+import { KleinBottleDemo } from "./components/KleinBottleDemo";
 
 import { MobiusAntDemo  } from "./components/MobiusAntDemo";
 
@@ -1867,99 +1868,67 @@ return (
         </div>
       </div>
 
-          {/* ================= DISK BLOCK ================= */}
-      <div className="space-y-2">
-        <div className="font-semibold text-gray-700 text-center">
-          Disk
-        </div>
-
-        {/* triangulação do disco (esquerda) + modelo redondo (direita) */}
-        <div className="grid md:grid-cols-2 gap-3 items-stretch">
-          {/* LEFT: disk triangulation */}
-          <div className="border rounded-lg overflow-hidden bg-white">
-            <TriangulationView
-              space="rp2"
-              m={m}
-              n={n}
-              faces={rp2DiskFaces as number[][]}
-              selectedSimplex={null}
-              rp2Decomp={false}
-              rp2PartView="full"
-              coloredEdges={showMobiusLoop ? mobiusColoredEdges : undefined}
-              orientedEdges={showMobiusLoop ? mobiusOrientedEdges : undefined}
-            />
-          </div>
-
-          {/* RIGHT: round disk model + explanation */}
-          <div className="border rounded-lg bg-white p-2">
-            <div className="text-center font-semibold mb-1 text-[11px]">
-              Disk model
-            </div>
-
-            {/* SVG do disco à esquerda e texto à direita */}
-            <div className="flex items-start gap-3">
-              {/* disk drawing */}
-              <div className="flex-shrink-0">
-                <svg viewBox="0 0 80 80" width="80" height="80">
-                  <circle
-                    cx="40"
-                    cy="40"
-                    r="26"
-                    fill="#e0f2fe"
-                    stroke="#0f172a"
-                    strokeWidth="1.5"
-                  />
-                  <path
-                    d="M 14 40 A 26 26 0 0 1 40 14"
-                    fill="none"
-                    stroke="#1d4ed8"
-                    strokeWidth="2"
-                    markerEnd="url(#arrow-blue-disk)"
-                  />
-                  <defs>
-                    <marker
-                      id="arrow-blue-disk"
-                      viewBox="0 0 10 10"
-                      refX="10"
-                      refY="5"
-                      markerWidth="5"
-                      markerHeight="5"
-                      orient="auto"
-                      markerUnits="strokeWidth"
-                    >
-                      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1d4ed8" />
-                    </marker>
-                  </defs>
-                </svg>
-              </div>
-
-              {/* explanation */}
-              <div className="text-[11px] leading-snug text-gray-700">
-                <div className="font-semibold mb-1">
-                  How the disk completes{" "}
-                  <InlineMath math="\\mathbb{RP}^2" />
-                </div>
-                <p>
-                  The coloured boundary circle of the Möbius strip is the same
-                  circle drawn here: each arc corresponds to one edge in the
-                  loop <b>0→1→2→4→0</b> of the cut square.
-                </p>
-                <p className="mt-1">
-                  When we glue this round disk along that circle, matching the
-                  colours, we cap off the Möbius strip. The resulting closed
-                  surface is the projective plane{" "}
-                  <InlineMath math="\\mathbb{RP}^2" />.
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
+    {/* ================= DISK BLOCK ================= */}
+    <div className="space-y-2">
+      <div className="font-semibold text-gray-700 text-center">
+        Disk
       </div>
-     </div>
+
+      {/* BIG 3D disk + Möbius model (same height as big Möbius animation) */}
+      <div className="border rounded-lg overflow-hidden bg-white h-[460px]">
+        <DiskAntDemo
+          t={mobiusT}
+          followAnt={followAnt}
+          boundaryT={mobiusT}
+        />
+      </div>
+
+      {/* Explanation text below the animation */}
+      <div className="text-[11px] text-gray-700 leading-snug mt-2">
+        <div className="font-semibold mb-1">
+          How the disk completes <InlineMath math={"\\mathbb{RP}^2"} />
+        </div>
+
+        <p className="mb-1">
+          In the square model on the left, the coloured loop{" "}
+          <InlineMath math={"0 \\to 1 \\to 2 \\to 4 \\to 0"} />{" "}
+          is the common boundary between two pieces: the outer band
+          (a Möbius strip) and the central region (a disk{" "}
+          <InlineMath math={"D^2"} />).
+        </p>
+
+        <p className="mb-1">
+          In the 3D picture here, the red–green grid is the Möbius strip.
+          The orange dot runs along its boundary circle, following the
+          same loop <InlineMath math={"0 \\to 1 \\to 2 \\to 4 \\to 0"} />{" "}
+          in the cut square. The translucent blue disk flies in and slowly
+          twists while it moves, until its boundary matches this circle.
+        </p>
+
+        <p>
+          Gluing this round disk along that circle, matching the colours,
+          we <em>cap off</em> the Möbius strip. The resulting closed surface
+          is the projective plane <InlineMath math={"\\mathbb{RP}^2"} />:
+          topologically, it is exactly the union of a Möbius strip and a
+          disk with their boundary circles identified.
+        </p>
+      </div>
+    </div>
+
+
+           
+    </div>
 
   </Section>
+
 )}
 
+      <Section title="Klein bottle (3D animation)">
+        <div className="border rounded-lg overflow-hidden bg-white h-72">
+          {/* reuse the same mobiusT + followAnt slider you already have */}
+          <KleinBottleDemo t={mobiusT} followAnt={followAnt} />
+        </div>
+      </Section>
 
 
       {/* CADEIAS - Pode ser fixado com SVG */}
