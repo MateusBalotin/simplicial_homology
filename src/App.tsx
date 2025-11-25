@@ -1958,14 +1958,15 @@ return (
             </p>
 
             {/* Animação 3D: disco + faixa de Möbius */}
-            <div className="border rounded-lg overflow-hidden bg-white h-[460px]">
+            <div className="border rounded-lg overflow-hidden bg-white h-[600px]">
               <DiskAntDemo
                 t={mobiusT}
                 followAnt={followAnt}
-                boundaryT={mobiusT}  // ou outro parâmetro que você quiser
+                boundaryT={mobiusT}
               />
             </div>
           </div>
+
 
           {/* ================= FIGURA B ================= */}
           <div className="space-y-2">
@@ -1992,60 +1993,6 @@ return (
         </div>
       </Section>
     )}
-
-    {space === "klein" && (
-      <>
-        <h2 className="text-lg font-semibold mb-2">Klein bottle (3D)</h2>
-
-        {/* This is the same idea as the red HEIGHT TEST: fixed big height */}
-        <div
-          className="border rounded-lg overflow-hidden bg-white"
-          style={{ height: "700px" }}   // change if you want taller/shorter
-        >
-          <KleinBottleDemo t={kleinT} />
-        </div>
-
-        {/* Controls under the animation */}
-        <div className="flex items-center gap-2 text-xs mt-2">
-          <span>Ant position</span>
-          <input
-            type="range"
-            min={0}
-            max={1000}
-            value={Math.round(kleinT * 1000)}
-            onChange={(e) =>
-              setKleinT(parseInt(e.target.value, 10) / 1000)
-            }
-            className="flex-1"
-          />
-          <button
-            className="px-2 py-1 border rounded"
-            onClick={() => setKleinPlaying((p) => !p)}
-          >
-            {kleinPlaying ? "Pause" : "Play"}
-          </button>
-          <button
-            className="px-2 py-1 border rounded"
-            onClick={() => {
-              setKleinPlaying(false);
-              setKleinT(0);
-            }}
-          >
-            Reset
-          </button>
-          <button
-            className="px-2 py-1 border rounded"
-            onClick={() => setKleinFollow((f) => !f)}
-            disabled
-          >
-            Stop follow
-          </button>
-        </div>
-      </>
-    )}
-
-
-
 
       {/* CADEIAS - Pode ser fixado com SVG */}
       {chainsWithSVG ? (
@@ -2089,7 +2036,7 @@ return (
 
           <div className="flex flex-col justify-center">
             {faces.length ? (
-              <div className="w-full">
+              <div className="border rounded-lg bg-white h-[420px]">
                 <TriangulationView
                   space={space}
                   m={m}

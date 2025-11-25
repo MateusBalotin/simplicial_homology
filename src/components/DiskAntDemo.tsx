@@ -311,17 +311,17 @@ function Rp2Halo({ capProgress }: { capProgress: number }) {
 
 function CameraRig({ t, follow }: { t: number; follow: boolean }) {
   const { camera } = useThree();
-  const target = useRef(new THREE.Vector3(0, 0, 0)).current;
+  // look at a point higher up in the scene
+  const target = useRef(new THREE.Vector3(0, 0.9, 0)).current;
 
   useFrame(() => {
     if (!follow) return;
 
-    // Slow orbit around the object
     const u = 4 * Math.PI * t;
     const angle = u * 0.35;
 
-    const radius = 4.0;
-    const height = 2.3;
+    const radius = 3.0;   // closer
+    const height = 1.1;   // lower
 
     const desiredPos = new THREE.Vector3(
       radius * Math.cos(angle),
@@ -336,10 +336,10 @@ function CameraRig({ t, follow }: { t: number; follow: boolean }) {
   return null;
 }
 
+
 // =======================
 //  Scene
 // =======================
-
 function Scene({
   t,
   followAnt,
@@ -360,29 +360,33 @@ function Scene({
       <directionalLight position={[4, 6, 3]} intensity={0.9} />
       <directionalLight position={[-4, -3, 2]} intensity={0.4} />
 
-      {/* Slight global scale so the strip+disk fill more of the card */}
-      <group scale={1.25}>
-        {/* Möbius decomposition: wireframe + ant + boundary dot */}
-        <MobiusWireStrip />
-        <StartMarker />
-        <AntOnMobius t={t} />
-        <BoundaryDot boundaryT={boundaryT} />
+        {/* lift and enlarge the whole Möbius+disk */}
+      {/* Aumenta bastante o tamanho dentro do quadro */}
+        <group scale={2.0} position={[0, 0.2, 0]}>
+          {/* Möbius decomposition: wireframe + ant + boundary dot */}
+          <MobiusWireStrip />
+          <StartMarker />
+          <AntOnMobius t={t} />
+          <BoundaryDot boundaryT={boundaryT} />
 
-        {/* Disk approaching and twisting to cap the boundary */}
-        <TwistedCapDisk capProgress={capProgress} />
+          {/* Disk approaching and twisting to cap the boundary */}
+          <TwistedCapDisk capProgress={capProgress} />
 
-        {/* Faint RP² halo once the disk is almost “glued” */}
-        <Rp2Halo capProgress={capProgress} />
-      </group>
+          {/* Faint RP² halo once the disk is almost “glued” */}
+          <Rp2Halo capProgress={capProgress} />
+        </group>
 
-      {/* Camera rig that optionally follows the ant */}
-      <CameraRig t={t} follow={followAnt} />
 
-      {/* Same orbit controls feel as the Möbius strip demo */}
-      <OrbitControls enablePan={false} />
+        <CameraRig t={t} follow={followAnt} />
+
+        <OrbitControls
+          enablePan={false}
+          target={[0, 0.9, 0]}   // same target as CameraRig
+        />
     </>
   );
 }
+
 
 // =======================
 //  Main exported component
@@ -396,9 +400,7 @@ export function DiskAntDemo({
 
   return (
     <Canvas
-      // camera closer + smaller fov so the strip+disk look BIG,
-      // but still fully inside the block (similar to Möbius demo)
-      camera={{ position: [3.0, 1.8, 3.0], fov: 40, near: 0.1, far: 50 }}
+      camera={{ position: [2.6, 1.1, 2.6], fov: 30, near: 0.1, far: 50 }}
       shadows={false}
       style={{ width: "100%", height: "100%" }}
     >
@@ -406,3 +408,4 @@ export function DiskAntDemo({
     </Canvas>
   );
 }
+

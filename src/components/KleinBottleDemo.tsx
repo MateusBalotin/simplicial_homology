@@ -5,10 +5,10 @@ import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 
 export type KleinBottleDemoProps = {
-  t: number; // in [0,1]
+  /** t in [0,1] – driven by kleinT (slider + Play) */
+  t: number;
 };
 
-// make the ant more visible
 const ANT_RADIUS = 0.14;
 
 // ---------- Klein bottle immersion ----------
@@ -60,7 +60,7 @@ function kleinNormal(u: number, v: number): THREE.Vector3 {
   return du.cross(dv).normalize();
 }
 
-// one closed loop on the surface
+// closed loop on the “belly” of the bottle
 function loopPointAndNormal(t: number) {
   const u0 = Math.PI * 0.55;
   const v = 2 * Math.PI * (t % 1);
@@ -70,7 +70,6 @@ function loopPointAndNormal(t: number) {
 }
 
 // ---------- Bottle surface ----------
-
 function KleinSurface() {
   const geom = useMemo(() => {
     const uSeg = 160;
@@ -126,7 +125,6 @@ function KleinSurface() {
 }
 
 // ---------- Loop + ant ----------
-
 function LoopTube() {
   const geom = useMemo(() => {
     const segments = 260;
@@ -139,7 +137,6 @@ function LoopTube() {
     }
 
     const path = new THREE.CatmullRomCurve3(points, true);
-    // make the loop tube a bit thicker
     return new THREE.TubeGeometry(path, segments, 0.035, 20, true);
   }, []);
 
@@ -157,10 +154,10 @@ function LoopTube() {
 function AntOnLoop({ t }: { t: number }) {
   const ref = useRef<THREE.Mesh>(null!);
 
+  // Just follow the given t; App.tsx handles animation (Play button)
   useFrame(() => {
     if (!ref.current) return;
     const { pos, n } = loopPointAndNormal(t);
-    // lift the ant more off the surface so it never hides
     const offset = ANT_RADIUS * 2.4;
     const p = pos.clone().addScaledVector(n, offset);
     ref.current.position.copy(p);
@@ -179,43 +176,46 @@ function AntOnLoop({ t }: { t: number }) {
 }
 
 // ---------- Scene ----------
-
 function Scene({ t }: { t: number }) {
   return (
     <>
       <color attach="background" args={["#ffffff"]} />
 
-      <ambientLight intensity={0.9} />
-      <directionalLight position={[4, 6, 3]} intensity={0.9} />
-      <directionalLight position={[-3, 4, -2]} intensity={0.5} />
+      <ambientLight intensity={1.0} />
+      <directionalLight position={[4, 6, 3]} intensity={1.0} />
+      <directionalLight position={[-3, 4, -2]} intensity={0.6} />
 
-      {/* Centered: move slightly DOWN (y < 0) and scale a bit */}
+      {/* Centered in the container */}
       <group
-        scale={[1.1, 1.1, 1.1]}
-        position={[0, -0.25, 0]}
-        rotation={[0.15, Math.PI / 2, 0]}
+        scale={[1.3, 1.3, 1.3]}
+        position={[0, 0, 0]}                // centered at origin
+        rotation={[0.1, Math.PI / 2, 0]}    // small tilt, but no vertical shift
       >
         <KleinSurface />
         <LoopTube />
         <AntOnLoop t={t} />
       </group>
 
-      <OrbitControls enablePan={false} enableZoom={true} />
+      <OrbitControls
+        enablePan={false}
+        enableZoom={true}
+        target={[0, 0, 0]}                  // look exactly at the center
+      />
     </>
   );
 }
 
 // ---------- Exported component ----------
-
 export function KleinBottleDemo({ t }: KleinBottleDemoProps) {
   return (
     <Canvas
       style={{ width: "100%", height: "100%" }}
+      frameloop="always"
       camera={{
-        position: [3.0, 2.4, 3.0],
-        fov: 45,
+        position: [3, 0, 3],   // y = 0 -> vertically centered
+        fov: 40,
         near: 0.1,
-        far: 50,
+        far: 100,
       }}
     >
       <Scene t={t} />
