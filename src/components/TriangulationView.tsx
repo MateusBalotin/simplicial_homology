@@ -5,7 +5,7 @@ type ColoredEdge = { edge: [number, number]; color: string; width?: number };
 type OrientedEdge = { edge: [number, number]; color?: string; width?: number };
 
 export type TriangulationViewProps = {
-  space: "torus" | "klein" | "rp2";
+  space: "torus" | "klein" | "rp2" | "doubleTorus";
   m: number;
   n: number;
   faces: number[][];
@@ -44,7 +44,7 @@ export function TriangulationView({
     const P = new Map<number, { x: number; y: number }>();
 
     if (space === "rp2") {
-      // regular hexagon for RP²
+      // regular hexagon for RP² (vértices 0..5)
       const R = 0.42;
       const cx = 0.5;
       const cy = 0.5;
@@ -52,12 +52,24 @@ export function TriangulationView({
         const ang = (2 * Math.PI * v) / 6 - Math.PI / 2;
         P.set(v, { x: cx + R * Math.cos(ang), y: cy + R * Math.sin(ang) });
       }
-    } else {
+    } else if (space === "doubleTorus") {
+    if (!faces.length) return P; // avoid Math.max on []
+    const maxV = Math.max(...faces.flat());
+    const R = 0.42;
+    const cx = 0.5;
+    const cy = 0.5;
+    for (let v = 0; v <= maxV; v++) {
+      const ang = (2 * Math.PI * v) / (maxV + 1) - Math.PI / 2;
+      P.set(v, { x: cx + R * Math.cos(ang), y: cy + R * Math.sin(ang) });
+    }
+  } else {
       // rectangular grid for torus / Klein
       for (let i = 0; i < m; i++) {
         for (let j = 0; j < n; j++) {
           const id = i * n + j;
-          P.set(id, { x: (j + 0.5) / n, y: (i + 0.5) / m });
+          const x = (j + 0.5) / n;
+          const y = (i + 0.5) / m;
+          P.set(id, { x, y });
         }
       }
     }

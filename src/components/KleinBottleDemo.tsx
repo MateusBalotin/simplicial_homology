@@ -1,23 +1,17 @@
 // src/components/KleinBottleDemo.tsx
 import React, { useRef, useMemo } from "react";
 import * as THREE from "three";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 
 export type KleinBottleDemoProps = {
-  /** t in [0,1] – use your mobiusT here */
-  t: number;
-  /** If true, camera gently orbits around the bottle. */
-  followAnt?: boolean;
+  t: number; // in [0,1]
 };
 
-const ANT_RADIUS = 0.08;
+// make the ant more visible
+const ANT_RADIUS = 0.14;
 
-// =====================================================
-//  Geometry helpers – "bottle" immersion from Wikipedia
-// =====================================================
-// 0 ≤ u < π, 0 ≤ v < 2π
-
+// ---------- Klein bottle immersion ----------
 function kleinPoint(u: number, v: number): THREE.Vector3 {
   const cu = Math.cos(u);
   const su = Math.sin(u);
@@ -58,44 +52,36 @@ function kleinPoint(u: number, v: number): THREE.Vector3 {
 
 function kleinNormal(u: number, v: number): THREE.Vector3 {
   const eps = 0.0005;
-
   const p = kleinPoint(u, v);
   const p_u = kleinPoint(u + eps, v);
   const p_v = kleinPoint(u, v + eps);
-
   const du = p_u.sub(p.clone());
   const dv = p_v.sub(p.clone());
-
   return du.cross(dv).normalize();
 }
 
-// single closed loop around the “belly” of the bottle:
-// fix u = u0 and let v run from 0 to 2π
+// one closed loop on the surface
 function loopPointAndNormal(t: number) {
-  const u0 = Math.PI * 0.55; // around the middle of the bottle
-  const v = 2 * Math.PI * t;
-
+  const u0 = Math.PI * 0.55;
+  const v = 2 * Math.PI * (t % 1);
   const pos = kleinPoint(u0, v);
   const n = kleinNormal(u0, v);
   return { pos, n };
 }
 
-// =======================
-//  Bottle surface mesh
-// =======================
+// ---------- Bottle surface ----------
 
 function KleinSurface() {
   const geom = useMemo(() => {
     const uSeg = 160;
     const vSeg = 80;
-
     const positions: number[] = [];
     const indices: number[] = [];
 
     for (let i = 0; i <= uSeg; i++) {
-      const u = (Math.PI * i) / uSeg; // 0 .. π
+      const u = (Math.PI * i) / uSeg;
       for (let j = 0; j <= vSeg; j++) {
-        const v = (2 * Math.PI * j) / vSeg; // 0 .. 2π
+        const v = (2 * Math.PI * j) / vSeg;
         const p = kleinPoint(u, v);
         positions.push(p.x, p.y, p.z);
       }
@@ -125,7 +111,6 @@ function KleinSurface() {
 
   return (
     <mesh geometry={geom}>
-      {/* glassy / translucent material */}
       <meshPhysicalMaterial
         color="#5b8dd5"
         roughness={0.18}
@@ -140,9 +125,7 @@ function KleinSurface() {
   );
 }
 
-// =======================
-//  Loop + ant on the bottle
-// =======================
+// ---------- Loop + ant ----------
 
 function LoopTube() {
   const geom = useMemo(() => {
@@ -156,15 +139,16 @@ function LoopTube() {
     }
 
     const path = new THREE.CatmullRomCurve3(points, true);
-    return new THREE.TubeGeometry(path, segments, 0.02, 16, true);
+    // make the loop tube a bit thicker
+    return new THREE.TubeGeometry(path, segments, 0.035, 20, true);
   }, []);
 
   return (
     <mesh geometry={geom}>
       <meshStandardMaterial
         color="#e11d48"
-        emissive="#9f1239"
-        emissiveIntensity={0.6}
+        emissive="#be123c"
+        emissiveIntensity={0.9}
       />
     </mesh>
   );
@@ -175,9 +159,9 @@ function AntOnLoop({ t }: { t: number }) {
 
   useFrame(() => {
     if (!ref.current) return;
-
     const { pos, n } = loopPointAndNormal(t);
-    const offset = ANT_RADIUS * 1.6;
+    // lift the ant more off the surface so it never hides
+    const offset = ANT_RADIUS * 2.4;
     const p = pos.clone().addScaledVector(n, offset);
     ref.current.position.copy(p);
   });
@@ -186,83 +170,55 @@ function AntOnLoop({ t }: { t: number }) {
     <mesh ref={ref}>
       <sphereGeometry args={[ANT_RADIUS, 32, 32]} />
       <meshStandardMaterial
-        color="#f97316"
-        emissive="#c2410c"
-        emissiveIntensity={0.9}
+        color="#facc15"
+        emissive="#f97316"
+        emissiveIntensity={1.2}
       />
     </mesh>
   );
 }
 
-// =======================
-//  Camera rig
-// =======================
+// ---------- Scene ----------
 
-function CameraRig({ t, follow }: { t: number; follow: boolean }) {
-  const { camera } = useThree();
-  const target = useRef(new THREE.Vector3(0, 0, 0)).current;
-
-  useFrame(() => {
-    if (!follow) return;
-
-    const angle = 2 * Math.PI * (0.1 + 0.7 * t);
-    const radius = 2.6;
-    const height = 1.8;
-
-    const desired = new THREE.Vector3(
-      radius * Math.cos(angle),
-      height,
-      radius * Math.sin(angle)
-    );
-
-    camera.position.lerp(desired, 0.08);
-    camera.lookAt(target);
-  });
-
-  return null;
-}
-
-// =======================
-//  Scene
-// =======================
-
-function Scene({ t, followAnt }: { t: number; followAnt: boolean }) {
+function Scene({ t }: { t: number }) {
   return (
     <>
       <color attach="background" args={["#ffffff"]} />
 
-      <ambientLight intensity={0.8} />
+      <ambientLight intensity={0.9} />
       <directionalLight position={[4, 6, 3]} intensity={0.9} />
+      <directionalLight position={[-3, 4, -2]} intensity={0.5} />
 
-      {/* scale + rotate so the bottle fills the block nicely */}
-      <group scale={[0.7, 0.7, 0.7]} rotation={[0, Math.PI / 2, 0]}>
+      {/* Centered: move slightly DOWN (y < 0) and scale a bit */}
+      <group
+        scale={[1.1, 1.1, 1.1]}
+        position={[0, -0.25, 0]}
+        rotation={[0.15, Math.PI / 2, 0]}
+      >
         <KleinSurface />
         <LoopTube />
         <AntOnLoop t={t} />
       </group>
 
-      <CameraRig t={t} follow={followAnt} />
-      <OrbitControls enablePan={false} enableZoom={false} />
+      <OrbitControls enablePan={false} enableZoom={true} />
     </>
   );
 }
 
-// =======================
-//  Exported component
-// =======================
+// ---------- Exported component ----------
 
-export function KleinBottleDemo({
-  t,
-  followAnt = true,
-}: KleinBottleDemoProps) {
+export function KleinBottleDemo({ t }: KleinBottleDemoProps) {
   return (
-    <div className="w-full h-full">
-      <Canvas
-        className="w-full h-full"
-        camera={{ position: [2.3, 2.0, 2.3], fov: 45, near: 0.1, far: 50 }}
-      >
-        <Scene t={t} followAnt={followAnt} />
-      </Canvas>
-    </div>
+    <Canvas
+      style={{ width: "100%", height: "100%" }}
+      camera={{
+        position: [3.0, 2.4, 3.0],
+        fov: 45,
+        near: 0.1,
+        far: 50,
+      }}
+    >
+      <Scene t={t} />
+    </Canvas>
   );
 }

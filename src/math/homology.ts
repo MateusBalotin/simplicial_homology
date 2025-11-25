@@ -4,6 +4,51 @@ import { snfDiagonal } from "./linearAlgebra";
 import { rankOverQ } from "./linearAlgebra";
 import { buildRP2Minimal, allSimplicesFromTriangles, triangulatedFaces , wrapTorus, wrapKlein} from "./triangulation";
 
+// 12-vertex triangulation of the double torus (genus 2).
+// Vertices are 0..11, faces are oriented triangles.
+const genus2Tris: [number, number, number][] = [
+  [0, 1, 2],
+  [0, 1, 3],
+  [0, 2, 4],
+  [0, 3, 5],
+  [0, 4, 6],
+  [0, 5, 7],
+  [0, 6, 7],
+
+  [1, 2, 5],
+  [1, 3, 6],
+  [1, 5, 8],
+  [1, 6, 9],
+  [1, 8, 9],
+
+  [2, 4, 8],
+  [2, 5, 10],
+  [2, 8, 11],
+  [2, 10, 11],
+
+  [3, 5, 8],
+  [3, 6, 7],
+  [3, 7, 11],
+  [3, 8, 11],
+
+  [4, 6, 10],
+  [4, 8, 9],
+  [4, 9, 11],
+  [4, 10, 11],
+
+  [5, 7, 10],
+  [6, 9, 10],
+  [7, 9, 10],
+  [7, 9, 11],
+];
+
+
+export function buildGenus2Minimal() {
+  const tris = genus2Tris;
+  const simplices = allSimplicesFromTriangles(tris);
+  return { simplices, faces: tris as unknown as number[][] };
+}
+
 // oriented faces of a simplex
 export function orientedFaces(simplex: number[]){
   const faces: {face:number[];sign:bigint}[] = [];
@@ -15,15 +60,27 @@ export function orientedFaces(simplex: number[]){
   return faces;
 }
 
-export function buildComplex(space: 'torus'|'klein'|'rp2', m:number, n:number){
-  if (space==='rp2'){
+export function buildComplex(
+  space: "torus" | "klein" | "rp2" | "doubleTorus",
+  m: number,
+  n: number
+) {
+  if (space === "rp2") {
     return buildRP2Minimal();
   }
-  const wrap = space==='torus' ? wrapTorus : wrapKlein;
-  const faces = triangulatedFaces(m,n,wrap);
+
+  if (space === "doubleTorus") {
+    // usa a triangulação de gênero 2 que definimos acima
+    return buildGenus2Minimal();
+  }
+
+  const wrap = space === "torus" ? wrapTorus : wrapKlein;
+  const faces = triangulatedFaces(m, n, wrap);
   const simplices = allSimplicesFromTriangles(faces);
   return { simplices, faces };
 }
+
+
 
 export function groupByDim(simplices: number[][]){
   const by = new Map<number, number[][]>();
@@ -95,4 +152,6 @@ export function summarizeHomology(list: number[][]){
   const by = groupByDim(list);
   return bettiAndTorsion(by);
 }
+
+
 

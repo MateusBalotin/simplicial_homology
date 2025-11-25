@@ -45,7 +45,9 @@ import {
 
 export default function App() {
   // ----------------- STATE -----------------
-  const [space, setSpace] = useState<"torus" | "klein" | "rp2">("torus");
+  const [space, setSpace] =
+  useState<"torus" | "klein" | "rp2" | "doubleTorus">("torus");
+
   const [m, setM] = useState<number>(3);
   const [n, setN] = useState<number>(3);
   const [snfDiag, setSnfDiag] = useState<bigint[] | null>(null);
@@ -177,6 +179,11 @@ export default function App() {
   const [mobiusT, setMobiusT] = useState(0);
   const [mobiusPlaying, setMobiusPlaying] = useState(false);
   const [mobiusSpeed, setMobiusSpeed] = useState(0.5);
+
+
+    // RP² sphere → disk + Möbius animation (slower, independent)
+  const [rp2T, setRp2T] = useState(0);
+  const [rp2Playing, setRp2Playing] = useState(false);
 
   const cycleRp2PartView = () => {
     setRp2PartView((mode) =>
@@ -588,7 +595,31 @@ const go1_triangulate = () => {
     return c2Simplices[idx] ?? null;
   }, [triBuildStep, c1Simplices, c2Simplices]);
 
-      
+  
+  const [kleinT, setKleinT] = useState(0);
+  const [kleinPlaying, setKleinPlaying] = useState(false);
+  const [kleinFollow, setKleinFollow] = useState(true);
+
+
+  useEffect(() => {
+    if (!kleinPlaying) return;
+
+    let id: number;
+    let last = performance.now();
+
+    const loop = (now: number) => {
+      const dt = (now - last) / 1000;
+      last = now;
+
+      setKleinT(prev => (prev + dt * 0.1) % 1); // 0.1 = speed
+      id = requestAnimationFrame(loop);
+    };
+
+    id = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(id);
+  }, [kleinPlaying]);
+
+
   const pivotsCaption2 = useMemo(
     () =>
       rref2
@@ -648,6 +679,34 @@ const go1_triangulate = () => {
   useEffect(() => {
     go1_triangulate();
   }, []);
+
+    // Slow animation just for the RP² → disk + Möbius demo
+  useEffect(() => {
+    if (!rp2Playing) return;
+
+    let frameId: number;
+    let last = performance.now();
+
+    const loop = (now: number) => {
+      const dt = (now - last) / 1000;
+      last = now;
+
+      setRp2T(prev => {
+        const next = prev + dt * 0.1; // slower: full run ≈ 10s
+        if (next >= 1) {
+          setRp2Playing(false);
+          return 1;
+        }
+        return next;
+      });
+
+      frameId = requestAnimationFrame(loop);
+    };
+
+    frameId = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(frameId);
+  }, [rp2Playing]);
+
 
 // velocidade base: 1 volta a cada 4s em 1x
   const BASE_LAPS_PER_SECOND = 0.25;
@@ -1340,7 +1399,9 @@ return (
             <option value="torus">Torus T^2</option>
             <option value="klein">Klein bottle K</option>
             <option value="rp2">RP^2</option>
+            <option value="doubleTorus">Genus-2 surface (double torus)</option>
           </select>
+
           <div className="flex gap-3 mt-3">
             <div className="flex-1">
               <label className="text-sm text-gray-700">m</label>
@@ -1876,38 +1937,115 @@ return (
 
   )}
 
-    <Section title="RP² as disk + Möbius strip">
-      {/* ================= RP² SPHERE / DISK MODEL (VIDEO-STYLE) ================= */}
-    <div className="space-y-2 mt-4">
-      <div className="font-semibold text-gray-700 text-center">
-        RP² as sphere + disk model
-      </div>
+    {space === "rp2" && (
+      <Section title="ℝP² como disco + faixa de Möbius">
+        <div className="space-y-6 mt-2 text-xs">
+         {/* ================= FIGURA A ================= */}
+          <div className="space-y-2">
+            <div className="font-semibold text-gray-800 text-center">
+              Figura A – ℝP² como disco + faixa de Möbius
+            </div>
 
-      {/* same height as Möbius strip card */}
-      <div className="border rounded-lg overflow-hidden bg-black h-[460px]">
-        <RP2SphereDemo />
-      </div>
+            <p className="text-gray-700 leading-snug">
+              Nesta figura vemos ℝP² decomposto em dois pedaços:
+              um <span className="font-semibold">disco</span> e uma
+              <span className="font-semibold"> faixa de Möbius</span>, colados ao longo da
+              mesma circunferência de borda (a curva azul). A animação mostra como o
+              quadrado com identificações de lados pode ser recortado ao longo desse
+              laço azul: um lado vira a faixa de Möbius, o outro lado vira o disco.
+              O pontinho/“formiga” percorre exatamente essa borda, ajudando a enxergar
+              que é sempre o mesmo laço em ℝP².
+            </p>
 
-      <div className="text-[11px] text-gray-700 leading-snug mt-2">
-        <div className="font-semibold mb-1">
-          Connecting the Möbius+disk picture to the sphere model
+            {/* Animação 3D: disco + faixa de Möbius */}
+            <div className="border rounded-lg overflow-hidden bg-white h-[460px]">
+              <DiskAntDemo
+                t={mobiusT}
+                followAnt={followAnt}
+                boundaryT={mobiusT}  // ou outro parâmetro que você quiser
+              />
+            </div>
+          </div>
+
+          {/* ================= FIGURA B ================= */}
+          <div className="space-y-2">
+            <div className="font-semibold text-gray-800 text-center">
+              Figura B – ℝP² como esfera S² com pontos antipodais identificados
+            </div>
+
+            <p className="text-gray-700 leading-snug">
+              Aqui vemos outra descrição do mesmo espaço ℝP²: pegamos a esfera S² e
+              identificamos cada ponto com o seu oposto (pontos antipodais).
+              A <span className="font-semibold">circunferência azul</span> é um laço
+              especial em ℝP²: se cortarmos ℝP² ao longo desse laço, obtemos
+              exatamente a decomposição da Figura A, isto é, uma faixa de Möbius
+              mais um disco, colados pela mesma borda.
+              A <span className="font-semibold">haste rosa</span> representa uma
+              reta passando pela origem em ℝ³, ou seja, um ponto projetivo em ℝP².
+            </p>
+
+            <div className="border rounded-lg overflow-hidden bg-white h-[460px]">
+              {/* RP² como esfera S²/∼ – NÃO precisa de t */}
+              <RP2SphereDemo />
+            </div>
+          </div>
         </div>
-        <p className="mb-1">
-          The yellow sphere represents <span className="font-mono">S²</span>,
-          where we identify antipodal points (opposite points) to obtain{" "}
-          <span className="font-mono">ℝP²</span>. The pink segment is a line
-          through the origin, i.e. a single point of{" "}
-          <span className="font-mono">ℝP²</span>.
-        </p>
-        <p>
-          On the right, the rectangle with a blue circle boundary represents the
-          disk whose boundary is glued with a twist to form a Möbius strip.
-          This is the same decomposition you saw above, but now related to the
-          spherical model.
-        </p>
-      </div>
-    </div>
-    </Section>
+      </Section>
+    )}
+
+    {space === "klein" && (
+      <>
+        <h2 className="text-lg font-semibold mb-2">Klein bottle (3D)</h2>
+
+        {/* This is the same idea as the red HEIGHT TEST: fixed big height */}
+        <div
+          className="border rounded-lg overflow-hidden bg-white"
+          style={{ height: "700px" }}   // change if you want taller/shorter
+        >
+          <KleinBottleDemo t={kleinT} />
+        </div>
+
+        {/* Controls under the animation */}
+        <div className="flex items-center gap-2 text-xs mt-2">
+          <span>Ant position</span>
+          <input
+            type="range"
+            min={0}
+            max={1000}
+            value={Math.round(kleinT * 1000)}
+            onChange={(e) =>
+              setKleinT(parseInt(e.target.value, 10) / 1000)
+            }
+            className="flex-1"
+          />
+          <button
+            className="px-2 py-1 border rounded"
+            onClick={() => setKleinPlaying((p) => !p)}
+          >
+            {kleinPlaying ? "Pause" : "Play"}
+          </button>
+          <button
+            className="px-2 py-1 border rounded"
+            onClick={() => {
+              setKleinPlaying(false);
+              setKleinT(0);
+            }}
+          >
+            Reset
+          </button>
+          <button
+            className="px-2 py-1 border rounded"
+            onClick={() => setKleinFollow((f) => !f)}
+            disabled
+          >
+            Stop follow
+          </button>
+        </div>
+      </>
+    )}
+
+
+
 
       {/* CADEIAS - Pode ser fixado com SVG */}
       {chainsWithSVG ? (

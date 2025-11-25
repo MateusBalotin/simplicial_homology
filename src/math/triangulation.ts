@@ -96,14 +96,24 @@ export function buildRP2Minimal() {
   return { simplices, faces: tris as unknown as number[][] };
 }
 
-// Dispatcher used by App
-export function buildComplex(space: 'torus'|'klein'|'rp2', m:number, n:number){
-  if (space==='rp2'){
+export function buildComplex(
+  space: "torus" | "klein" | "rp2" | "doubleTorus",
+  m: number,
+  n: number
+) {
+  if (space === "rp2") {
     return buildRP2Minimal();
   }
-  const wrap = space==='torus' ? wrapTorus : wrapKlein;
-  const faces = triangulatedFaces(m,n,wrap);
+
+  if (space === "doubleTorus") {
+    // Mesma lógica temporária: usar o wrapping do toro.
+    const faces = triangulatedFaces(m, n, wrapTorus);
+    const simplices = allSimplicesFromTriangles(faces);
+    return { simplices, faces };
+  }
+
+  const wrap = space === "torus" ? wrapTorus : wrapKlein;
+  const faces = triangulatedFaces(m, n, wrap);
   const simplices = allSimplicesFromTriangles(faces);
   return { simplices, faces };
 }
-
