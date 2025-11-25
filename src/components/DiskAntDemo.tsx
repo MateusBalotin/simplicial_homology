@@ -16,7 +16,7 @@ export type DiskAntDemoProps = {
 const BALL_RADIUS = 0.1;
 
 // =======================
-//  Geometry helpers
+//  Geometry helpers (same as Möbius demo)
 // =======================
 
 function mobiusPoint(u: number, s: number, R = 1.4, w = 0.5): THREE.Vector3 {
@@ -30,6 +30,7 @@ function mobiusPoint(u: number, s: number, R = 1.4, w = 0.5): THREE.Vector3 {
   return new THREE.Vector3(x, y, z);
 }
 
+/** True surface normal via finite differences: n ∝ ∂F/∂u × ∂F/∂s */
 function mobiusSurfaceNormal(
   u: number,
   s: number,
@@ -224,24 +225,26 @@ function BoundaryDot({ boundaryT }: { boundaryT: number }) {
 }
 
 // =======================
-//  Twisted disk cap (flying in and twisting)
+//  Twisted disk cap (flying in and twisting -> “closing” RP²)
 // =======================
 
 function TwistedCapDisk({ capProgress }: { capProgress: number }) {
   const ref = useRef<THREE.Mesh>(null!);
+  const matRef = useRef<THREE.MeshStandardMaterial>(null!);
 
   useFrame(() => {
-    if (!ref.current) return;
+    if (!ref.current || !matRef.current) return;
 
-    const t = THREE.MathUtils.clamp(capProgress, 0, 1);
+    // Start the gluing a little after t=0 for nicer effect
+    const t = THREE.MathUtils.clamp((capProgress - 0.1) / 0.9, 0, 1);
 
     // Start: disk far above the strip, horizontal
-    const startPos = new THREE.Vector3(0, 0, 2.8);
+    const startPos = new THREE.Vector3(0, 0, 3.0);
     const startRot = new THREE.Euler(-Math.PI / 2, 0, 0); // facing down
 
-    // End: near the strip, roughly vertical
+    // End: near the strip, slightly tilted
     const endPos = new THREE.Vector3(0, 0.15, 0);
-    const endRot = new THREE.Euler(0, 0, 0);
+    const endRot = new THREE.Euler(-0.15, 0, 0); // small tilt
 
     const pos = startPos.clone().lerp(endPos, t);
     ref.current.position.copy(pos);
@@ -255,23 +258,55 @@ function TwistedCapDisk({ capProgress }: { capProgress: number }) {
 
     const euler = new THREE.Euler(rx, ry, rz + twist);
     ref.current.rotation.copy(euler);
+
+    // Scale: disk grows as it comes in
+    const s = 0.6 + 0.5 * t;
+    ref.current.scale.set(s, s, s);
+
+    // Opacity: becomes more visible as it “glues”
+    const baseOpacity = 0.15;
+    const maxOpacity = 0.55;
+    const k = t * t; // ease-in
+    matRef.current.opacity = baseOpacity + (maxOpacity - baseOpacity) * k;
   });
 
   return (
     <mesh ref={ref}>
-      <circleGeometry args={[1.2, 80]} />
+      {/* radius 1, we scale via mesh scale */}
+      <circleGeometry args={[1.0, 120]} />
       <meshStandardMaterial
+        ref={matRef}
         color="#60a5fa"
-        opacity={0.45}
         transparent
+        opacity={0.15}
         side={THREE.DoubleSide}
       />
     </mesh>
   );
 }
 
+// Optional faint “RP² bubble” to hint the closed surface when cap ~ glued
+function Rp2Halo({ capProgress }: { capProgress: number }) {
+  const t = THREE.MathUtils.clamp((capProgress - 0.6) / 0.4, 0, 1);
+  if (t <= 0) return null;
+
+  const opacity = 0.25 * t;
+
+  return (
+    <mesh>
+      <sphereGeometry args={[1.7, 48, 48]} />
+      <meshStandardMaterial
+        color="#bfdbfe"
+        transparent
+        opacity={opacity}
+        side={THREE.BackSide}
+      />
+    </mesh>
+  );
+}
+
 // =======================
-//  Camera rig
+//  Camera rig (same philosophy as Möbius demo)
 // =======================
 
 function CameraRig({ t, follow }: { t: number; follow: boolean }) {
@@ -281,12 +316,12 @@ function CameraRig({ t, follow }: { t: number; follow: boolean }) {
   useFrame(() => {
     if (!follow) return;
 
-    // keep radius smaller than Mobius so the scene looks bigger on screen
+    // Slow orbit around the object
     const u = 4 * Math.PI * t;
     const angle = u * 0.35;
 
-    const radius = 3.0; // was 4.0
-    const height = 2.1;
+    const radius = 4.0;
+    const height = 2.3;
 
     const desiredPos = new THREE.Vector3(
       radius * Math.cos(angle),
@@ -321,19 +356,29 @@ function Scene({
       {/* white background */}
       <color attach="background" args={["#ffffff"]} />
 
-      <ambientLight intensity={0.85} />
+      <ambientLight intensity={0.9} />
       <directionalLight position={[4, 6, 3]} intensity={0.9} />
+      <directionalLight position={[-4, -3, 2]} intensity={0.4} />
 
-      {/* SCALE UP the whole geometry so it fills more of the block */}
-      <group scale={[1.4, 1.4, 1.4]}>
+      {/* Slight global scale so the strip+disk fill more of the card */}
+      <group scale={1.25}>
+        {/* Möbius decomposition: wireframe + ant + boundary dot */}
         <MobiusWireStrip />
         <StartMarker />
         <AntOnMobius t={t} />
         <BoundaryDot boundaryT={boundaryT} />
+
+        {/* Disk approaching and twisting to cap the boundary */}
         <TwistedCapDisk capProgress={capProgress} />
+
+        {/* Faint RP² halo once the disk is almost “glued” */}
+        <Rp2Halo capProgress={capProgress} />
       </group>
 
+      {/* Camera rig that optionally follows the ant */}
       <CameraRig t={t} follow={followAnt} />
+
+      {/* Same orbit controls feel as the Möbius strip demo */}
       <OrbitControls enablePan={false} />
     </>
   );
@@ -342,7 +387,6 @@ function Scene({
 // =======================
 //  Main exported component
 // =======================
-
 export function DiskAntDemo({
   t,
   followAnt = false,
@@ -351,16 +395,14 @@ export function DiskAntDemo({
   const bt = boundaryT ?? t;
 
   return (
-    <div className="w-full h-full">
-      <Canvas
-        className="w-full h-full"
-        // camera closer than before so the objects appear larger
-        camera={{ position: [2.8, 2.0, 2.8], fov: 45, near: 0.1, far: 50 }}
-        shadows={false}
-        style={{ width: "100%", height: "100%" }}
-      >
-        <Scene t={t} followAnt={followAnt} boundaryT={bt} />
-      </Canvas>
-    </div>
+    <Canvas
+      // camera closer + smaller fov so the strip+disk look BIG,
+      // but still fully inside the block (similar to Möbius demo)
+      camera={{ position: [3.0, 1.8, 3.0], fov: 40, near: 0.1, far: 50 }}
+      shadows={false}
+      style={{ width: "100%", height: "100%" }}
+    >
+      <Scene t={t} followAnt={followAnt} boundaryT={bt} />
+    </Canvas>
   );
 }

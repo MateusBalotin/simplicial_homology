@@ -3,6 +3,7 @@ import "katex/dist/katex.min.css";
 import { InlineMath } from "react-katex";
 import { DiskAntDemo } from "./components/DiskAntDemo";
 import { KleinBottleDemo } from "./components/KleinBottleDemo";
+import { RP2SphereDemo   } from "./components/RP2SphereDemo";
 
 import { MobiusAntDemo  } from "./components/MobiusAntDemo";
 
@@ -1313,6 +1314,8 @@ function sameTriangle(a: number[], b: number[]) {
 }
 
 
+
+
   // ----------------- JSX -----------------
 return (
   <div className="min-h-screen bg-gray-100">
@@ -1602,9 +1605,9 @@ return (
     </div>
     
 
-{/* RP² unfolding BELOW the triangulation */}
-{space === "rp2" && (
-  <Section title="RP² as disk + Möbius strip">
+    {/* RP² unfolding BELOW the triangulation */}
+    {space === "rp2" && (
+    <Section title="RP² as disk + Möbius strip">
     {/* Toggle for colorful Möbius boundary edges */}
     <div className="flex justify-end mb-2 text-[11px] text-gray-700">
       <button
@@ -1866,70 +1869,45 @@ return (
             <b>CD</b> (red &amp; blue) remains boundary.
           </div>
         </div>
-      </div>
+      </div> 
+    </div>
 
-    {/* ================= DISK BLOCK ================= */}
-    <div className="space-y-2">
+    </Section>
+
+  )}
+
+    <Section title="RP² as disk + Möbius strip">
+      {/* ================= RP² SPHERE / DISK MODEL (VIDEO-STYLE) ================= */}
+    <div className="space-y-2 mt-4">
       <div className="font-semibold text-gray-700 text-center">
-        Disk
+        RP² as sphere + disk model
       </div>
 
-      {/* BIG 3D disk + Möbius model (same height as big Möbius animation) */}
-      <div className="border rounded-lg overflow-hidden bg-white h-[460px]">
-        <DiskAntDemo
-          t={mobiusT}
-          followAnt={followAnt}
-          boundaryT={mobiusT}
-        />
+      {/* same height as Möbius strip card */}
+      <div className="border rounded-lg overflow-hidden bg-black h-[460px]">
+        <RP2SphereDemo />
       </div>
 
-      {/* Explanation text below the animation */}
       <div className="text-[11px] text-gray-700 leading-snug mt-2">
         <div className="font-semibold mb-1">
-          How the disk completes <InlineMath math={"\\mathbb{RP}^2"} />
+          Connecting the Möbius+disk picture to the sphere model
         </div>
-
         <p className="mb-1">
-          In the square model on the left, the coloured loop{" "}
-          <InlineMath math={"0 \\to 1 \\to 2 \\to 4 \\to 0"} />{" "}
-          is the common boundary between two pieces: the outer band
-          (a Möbius strip) and the central region (a disk{" "}
-          <InlineMath math={"D^2"} />).
+          The yellow sphere represents <span className="font-mono">S²</span>,
+          where we identify antipodal points (opposite points) to obtain{" "}
+          <span className="font-mono">ℝP²</span>. The pink segment is a line
+          through the origin, i.e. a single point of{" "}
+          <span className="font-mono">ℝP²</span>.
         </p>
-
-        <p className="mb-1">
-          In the 3D picture here, the red–green grid is the Möbius strip.
-          The orange dot runs along its boundary circle, following the
-          same loop <InlineMath math={"0 \\to 1 \\to 2 \\to 4 \\to 0"} />{" "}
-          in the cut square. The translucent blue disk flies in and slowly
-          twists while it moves, until its boundary matches this circle.
-        </p>
-
         <p>
-          Gluing this round disk along that circle, matching the colours,
-          we <em>cap off</em> the Möbius strip. The resulting closed surface
-          is the projective plane <InlineMath math={"\\mathbb{RP}^2"} />:
-          topologically, it is exactly the union of a Möbius strip and a
-          disk with their boundary circles identified.
+          On the right, the rectangle with a blue circle boundary represents the
+          disk whose boundary is glued with a twist to form a Möbius strip.
+          This is the same decomposition you saw above, but now related to the
+          spherical model.
         </p>
       </div>
     </div>
-
-
-           
-    </div>
-
-  </Section>
-
-)}
-
-      <Section title="Klein bottle (3D animation)">
-        <div className="border rounded-lg overflow-hidden bg-white h-72">
-          {/* reuse the same mobiusT + followAnt slider you already have */}
-          <KleinBottleDemo t={mobiusT} followAnt={followAnt} />
-        </div>
-      </Section>
-
+    </Section>
 
       {/* CADEIAS - Pode ser fixado com SVG */}
       {chainsWithSVG ? (
